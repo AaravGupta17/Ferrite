@@ -15,19 +15,19 @@ FeStatus fe_arena_init(FeArena *a, void *buffer, size_t size) {
 
 void *fe_arena_alloc(FeArena *a, size_t size, size_t align) {
     assert(a != NULL);
-    assert((align & (align - 1)) == 0);  /* align must be power of two */
+    assert((align & (align - 1)) == 0);
 
-    /* Round current offset up to required alignment */
-    size_t aligned = (a->offset + align - 1) & ~(align - 1);
+    /* Align the actual pointer address, not just the offset */
+    uintptr_t current    = (uintptr_t)(a->base + a->offset);
+    uintptr_t aligned    = (current + align - 1) & ~(uintptr_t)(align - 1);
+    size_t    new_offset = aligned - (uintptr_t)a->base + size;
 
-    if (aligned + size > a->size) {
-        return NULL;  /* arena exhausted */
-    }
+    if (new_offset > a->size) return NULL;
 
-    a->offset = aligned + size;
+    a->offset = new_offset;
     if (a->offset > a->peak) a->peak = a->offset;
 
-    return a->base + aligned;
+    return (void *)aligned;
 }
 
 void fe_arena_reset(FeArena *a) {

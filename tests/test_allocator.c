@@ -5,7 +5,8 @@
 #include "../core/allocator.h"
 
 #define ARENA_SIZE (1024 * 1024)  /* 1MB test arena */
-static unsigned char arena_buf[ARENA_SIZE];
+static unsigned char arena_buf[ARENA_SIZE] __attribute__((aligned(64)));
+
 
 static void test_basic_alloc(void) {
     FeArena a;
