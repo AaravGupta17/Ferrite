@@ -1,7 +1,6 @@
 CC     = gcc
-CFLAGS = -std=c11 -Wall -Wextra -fsanitize=address,undefined -g -Icore
-
-all: test_tensor test_allocator test_ops test_graph
+CFLAGS = -std=c11 -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime
+all: test_tensor test_allocator test_ops test_graph test_engine
 
 test_tensor: core/tensor.o tests/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor core/tensor.o tests/test_tensor.o
@@ -44,3 +43,18 @@ graph/graph.o: graph/graph.c graph/graph.h core/tensor.h core/types.h
 
 tests/test_graph.o: tests/test_graph.c graph/graph.h core/tensor.h
 	$(CC) $(CFLAGS) -c tests/test_graph.c -o tests/test_graph.o
+
+test_engine: core/tensor.o core/allocator.o graph/graph.o \
+             ops/matmul.o ops/activations.o \
+             runtime/engine.o tests/test_engine.o
+	$(CC) $(CFLAGS) -o test_engine core/tensor.o core/allocator.o \
+	    graph/graph.o ops/matmul.o ops/activations.o \
+	    runtime/engine.o tests/test_engine.o -lm
+
+runtime/engine.o: runtime/engine.c runtime/engine.h \
+                  graph/graph.h ops/ops.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -c runtime/engine.c -o runtime/engine.o
+
+tests/test_engine.o: tests/test_engine.c runtime/engine.h \
+                     graph/graph.h core/tensor.h
+	$(CC) $(CFLAGS) -c tests/test_engine.c -o tests/test_engine.o

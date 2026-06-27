@@ -36,8 +36,8 @@ int fe_graph_add_node(FeGraph *g, const char *name, FeOpType op,
     node->op        = op;
     node->n_inputs  = n_inputs;
     node->n_outputs = n_outputs;
-    memcpy(node->inputs,  inputs,  n_inputs  * sizeof(int));
-    memcpy(node->outputs, outputs, n_outputs * sizeof(int));
+    if (n_inputs  > 0 && inputs)  memcpy(node->inputs,  inputs,  n_inputs  * sizeof(int));
+if (n_outputs > 0 && outputs) memcpy(node->outputs, outputs, n_outputs * sizeof(int));
 
     g->topo_valid = 0;  /* invalidate any previous sort */
     return g->n_nodes++;
