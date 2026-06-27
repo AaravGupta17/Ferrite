@@ -1,7 +1,7 @@
 CC     = gcc
 CFLAGS = -std=c11 -Wall -Wextra -fsanitize=address,undefined -g -Icore
 
-all: test_tensor test_allocator
+all: test_tensor test_allocator test_ops test_graph
 
 test_tensor: core/tensor.o tests/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor core/tensor.o tests/test_tensor.o
@@ -35,3 +35,12 @@ ops/activations.o: ops/activations.c ops/ops.h core/tensor.h core/types.h
 
 tests/test_ops.o: tests/test_ops.c ops/ops.h core/tensor.h
 	$(CC) $(CFLAGS) -c tests/test_ops.c -o tests/test_ops.o
+
+test_graph: core/tensor.o graph/graph.o tests/test_graph.o
+	$(CC) $(CFLAGS) -o test_graph core/tensor.o graph/graph.o tests/test_graph.o
+
+graph/graph.o: graph/graph.c graph/graph.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -c graph/graph.c -o graph/graph.o
+
+tests/test_graph.o: tests/test_graph.c graph/graph.h core/tensor.h
+	$(CC) $(CFLAGS) -c tests/test_graph.c -o tests/test_graph.o
