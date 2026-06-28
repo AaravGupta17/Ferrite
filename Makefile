@@ -1,6 +1,7 @@
 CC     = gcc
-CFLAGS = -std=c11 -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime
-all: test_tensor test_allocator test_ops test_graph test_engine
+CFLAGS = -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime -Iimporter
+
+all: test_tensor test_allocator test_ops test_graph test_engine test_onnx
 
 test_tensor: core/tensor.o tests/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor core/tensor.o tests/test_tensor.o
@@ -70,3 +71,32 @@ importer/onnx.o: importer/onnx.c importer/onnx.h \
 
 tests/test_onnx.o: tests/test_onnx.c importer/onnx.h graph/graph.h
 	$(CC) $(CFLAGS) -Iimporter -c tests/test_onnx.c -o tests/test_onnx.o
+
+bench_matmul: core/tensor.o ops/matmul.o ops/activations.o tools/bench_matmul.o
+	$(CC) $(CFLAGS) -O2 -o bench_matmul core/tensor.o ops/matmul.o \
+	    ops/activations.o tools/bench_matmul.o -lm
+
+tools/bench_matmul.o: tools/bench_matmul.c core/tensor.h ops/ops.h
+	$(CC) $(CFLAGS) -O2 -Itools -c tools/bench_matmul.c -o tools/bench_matmul.o
+
+bench_matmul_avx2: core/tensor.o ops/matmul.o ops/activations.o \
+                   simd/matmul_avx2.o tools/bench_matmul.o
+	$(CC) $(CFLAGS) -O3 -mavx2 -mfma -o bench_matmul_avx2 \
+	    core/tensor.o ops/matmul.o ops/activations.o \
+	    simd/matmul_avx2.o tools/bench_matmul.o -lm
+
+simd/matmul_avx2.o: simd/matmul_avx2.c simd/matmul_avx2.h \
+                    core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -O3 -mavx2 -mfma -Isimd \
+	    -c simd/matmul_avx2.c -o simd/matmul_avx2.o
+
+bench_avx2: core/tensor.o ops/matmul.o ops/activations.o \
+            simd/matmul_avx2.o tools/bench_avx2.o
+	$(CC) $(CFLAGS) -O3 -mavx2 -mfma -o bench_avx2 \
+	    core/tensor.o ops/matmul.o ops/activations.o \
+	    simd/matmul_avx2.o tools/bench_avx2.o -lm
+
+tools/bench_avx2.o: tools/bench_avx2.c core/tensor.h ops/ops.h \
+                    simd/matmul_avx2.h
+	$(CC) $(CFLAGS) -O3 -mavx2 -mfma -Isimd \
+	    -c tools/bench_avx2.c -o tools/bench_avx2.o
