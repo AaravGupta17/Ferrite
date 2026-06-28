@@ -58,3 +58,15 @@ runtime/engine.o: runtime/engine.c runtime/engine.h \
 tests/test_engine.o: tests/test_engine.c runtime/engine.h \
                      graph/graph.h core/tensor.h
 	$(CC) $(CFLAGS) -c tests/test_engine.c -o tests/test_engine.o
+
+test_onnx: core/tensor.o core/allocator.o graph/graph.o \
+           importer/onnx.o tests/test_onnx.o
+	$(CC) $(CFLAGS) -o test_onnx core/tensor.o core/allocator.o \
+	    graph/graph.o importer/onnx.o tests/test_onnx.o
+
+importer/onnx.o: importer/onnx.c importer/onnx.h \
+                 graph/graph.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -Iimporter -c importer/onnx.c -o importer/onnx.o
+
+tests/test_onnx.o: tests/test_onnx.c importer/onnx.h graph/graph.h
+	$(CC) $(CFLAGS) -Iimporter -c tests/test_onnx.c -o tests/test_onnx.o
