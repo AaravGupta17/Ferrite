@@ -57,3 +57,26 @@ FeStatus fe_softmax(const FeTensor *in, FeTensor *out);
 FeStatus fe_bias_add(const FeTensor *in, const FeTensor *bias, FeTensor *out);
 
 #endif // FERRITE_OPS_H
+
+/*
+ * 1D Convolution: out = conv1d(input, weight, bias)
+ *
+ * input:  [batch, C_in, L]
+ * weight: [C_out, C_in, K]
+ * bias:   [C_out] or NULL
+ * out:    [batch, C_out, L_out]
+ *
+ * stride: step size (default 1)
+ * pad:    zero-padding on each side
+ */
+FeStatus fe_conv1d(const FeTensor *input, const FeTensor *weight,
+                   const FeTensor *bias,  FeTensor *out,
+                   int stride, int pad);
+
+/*
+ * im2col: reshape input patches into a matrix for matmul-based conv.
+ * col: [C_in * K, L_out] — caller allocates
+ */
+FeStatus fe_im2col(const FeTensor *input, FeTensor *col,
+                   int K, int stride, int pad,
+                   int batch_idx);

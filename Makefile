@@ -1,7 +1,7 @@
 CC     = gcc
 CFLAGS = -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime -Iimporter
 
-all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner
+all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d
 
 test_tensor: core/tensor.o tests/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor core/tensor.o tests/test_tensor.o
@@ -114,3 +114,15 @@ tests/test_planner.o: tests/test_planner.c planner/memory_planner.h \
                       graph/graph.h core/tensor.h
 	$(CC) $(CFLAGS) -Iplanner -c tests/test_planner.c \
 	    -o tests/test_planner.o
+
+test_conv1d: core/tensor.o core/allocator.o ops/matmul.o ops/activations.o \
+             ops/conv1d.o tests/test_conv1d.o
+	$(CC) $(CFLAGS) -o test_conv1d core/tensor.o core/allocator.o \
+	    ops/matmul.o ops/activations.o ops/conv1d.o \
+	    tests/test_conv1d.o -lm
+
+ops/conv1d.o: ops/conv1d.c ops/ops.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -c ops/conv1d.c -o ops/conv1d.o
+
+tests/test_conv1d.o: tests/test_conv1d.c ops/ops.h core/tensor.h
+	$(CC) $(CFLAGS) -c tests/test_conv1d.c -o tests/test_conv1d.o
