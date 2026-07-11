@@ -126,3 +126,23 @@ ops/conv1d.o: ops/conv1d.c ops/ops.h core/tensor.h core/types.h
 
 tests/test_conv1d.o: tests/test_conv1d.c ops/ops.h core/tensor.h
 	$(CC) $(CFLAGS) -c tests/test_conv1d.c -o tests/test_conv1d.o
+
+runtime/engine.o: runtime/engine.c runtime/engine.h \
+                  graph/graph.h ops/ops.h core/tensor.h core/types.h \
+                  tools/profiler.h
+	$(CC) $(CFLAGS) -Itools -c runtime/engine.c -o runtime/engine.o
+
+tools/profiler.o: tools/profiler.c tools/profiler.h
+	$(CC) $(CFLAGS) -Itools -c tools/profiler.c -o tools/profiler.o
+
+test_profiler: core/tensor.o core/allocator.o graph/graph.o \
+               ops/matmul.o ops/activations.o runtime/engine.o \
+               tools/profiler.o tests/test_profiler.o
+	$(CC) $(CFLAGS) -Itools -o test_profiler core/tensor.o core/allocator.o \
+	    graph/graph.o ops/matmul.o ops/activations.o \
+	    runtime/engine.o tools/profiler.o tests/test_profiler.o -lm
+
+tests/test_profiler.o: tests/test_profiler.c runtime/engine.h \
+                       tools/profiler.h graph/graph.h core/tensor.h
+	$(CC) $(CFLAGS) -Itools -c tests/test_profiler.c \
+	    -o tests/test_profiler.o

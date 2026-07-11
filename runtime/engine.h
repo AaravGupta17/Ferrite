@@ -5,11 +5,13 @@
 #include "tensor.h"
 #include "graph.h"
 #include "allocator.h"
+#include "profiler.h"
 
 typedef struct {
-    FeGraph  *graph;
-    FeArena   weight_arena;
-    FeArena   activation_arena;
+    FeGraph    *graph;
+    FeArena     weight_arena;
+    FeArena     activation_arena;
+    FeProfiler *profiler;
 } FeRuntime;
 
 FeStatus fe_runtime_init(FeRuntime *rt, FeGraph *graph,
@@ -24,4 +26,4 @@ FeStatus fe_runtime_run(FeRuntime *rt,
 
 void fe_runtime_print_trace(const FeRuntime *rt);
 
-#endif // FERRITE_ENGINE_H
+#endif
