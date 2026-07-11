@@ -1,7 +1,7 @@
 CC     = gcc
 CFLAGS = -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime -Iimporter
 
-all: test_tensor test_allocator test_ops test_graph test_engine test_onnx
+all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner
 
 test_tensor: core/tensor.o tests/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor core/tensor.o tests/test_tensor.o
@@ -100,3 +100,17 @@ tools/bench_avx2.o: tools/bench_avx2.c core/tensor.h ops/ops.h \
                     simd/matmul_avx2.h
 	$(CC) $(CFLAGS) -O3 -mavx2 -mfma -Isimd \
 	    -c tools/bench_avx2.c -o tools/bench_avx2.o
+
+test_planner: core/tensor.o core/allocator.o graph/graph.o \
+              planner/memory_planner.o tests/test_planner.o
+	$(CC) $(CFLAGS) -o test_planner core/tensor.o core/allocator.o \
+	    graph/graph.o planner/memory_planner.o tests/test_planner.o
+planner/memory_planner.o: planner/memory_planner.c planner/memory_planner.h \
+                           graph/graph.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -Iplanner -c planner/memory_planner.c \
+	    -o planner/memory_planner.o
+
+tests/test_planner.o: tests/test_planner.c planner/memory_planner.h \
+                      graph/graph.h core/tensor.h
+	$(CC) $(CFLAGS) -Iplanner -c tests/test_planner.c \
+	    -o tests/test_planner.o
