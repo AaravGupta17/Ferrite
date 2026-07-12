@@ -1,7 +1,7 @@
 CC     = gcc
 CFLAGS = -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime -Iimporter
 
-all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d
+all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d test_profiler
 
 test_tensor: core/tensor.o tests/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor core/tensor.o tests/test_tensor.o
@@ -146,3 +146,17 @@ tests/test_profiler.o: tests/test_profiler.c runtime/engine.h \
                        tools/profiler.h graph/graph.h core/tensor.h
 	$(CC) $(CFLAGS) -Itools -c tests/test_profiler.c \
 	    -o tests/test_profiler.o
+
+test_quant: core/tensor.o core/allocator.o quantization/quant.o \
+            tests/test_quant.o
+	$(CC) $(CFLAGS) -o test_quant core/tensor.o core/allocator.o \
+	    quantization/quant.o tests/test_quant.o -lm
+
+quantization/quant.o: quantization/quant.c quantization/quant.h \
+                      core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -Iquantization -c quantization/quant.c \
+	    -o quantization/quant.o
+
+tests/test_quant.o: tests/test_quant.c quantization/quant.h core/tensor.h
+	$(CC) $(CFLAGS) -Iquantization -c tests/test_quant.c \
+	    -o tests/test_quant.o
