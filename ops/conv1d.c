@@ -1,9 +1,9 @@
 // ops/conv1d.c
 #include "ops.h"
+#include <stdio.h>
 #include <string.h>
 #include <assert.h>
 #include <stdlib.h>
-
 /*
  * im2col for one batch element.
  *
@@ -60,6 +60,11 @@ FeStatus fe_im2col(const FeTensor *input, FeTensor *col,
 FeStatus fe_conv1d(const FeTensor *input, const FeTensor *weight,
                    const FeTensor *bias,  FeTensor *out,
                    int stride, int pad) {
+    fprintf(stderr, "conv1d: in=[%d,%d,%d] w=[%d,%d,%d] out=[%d,%d,%d] stride=%d pad=%d\n",
+            input->shape[0], input->shape[1], input->shape[2],
+            weight->shape[0], weight->shape[1], weight->shape[2],
+            out->shape[0], out->shape[1], out->shape[2],
+            stride, pad);
     if (!input || !weight || !out) return FE_ERR_NULL;
     if (input->ndim  != 3) return FE_ERR_SHAPE;
     if (weight->ndim != 3) return FE_ERR_SHAPE;

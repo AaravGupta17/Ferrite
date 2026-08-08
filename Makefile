@@ -1,7 +1,7 @@
 CC     = gcc
 CFLAGS = -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime -Iimporter
 
-all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d test_profiler
+all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d test_profiler test_quant
 
 test_tensor: core/tensor.o tests/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor core/tensor.o tests/test_tensor.o
@@ -51,10 +51,6 @@ test_engine: core/tensor.o core/allocator.o graph/graph.o \
 	$(CC) $(CFLAGS) -o test_engine core/tensor.o core/allocator.o \
 	    graph/graph.o ops/matmul.o ops/activations.o \
 	    runtime/engine.o tests/test_engine.o -lm
-
-runtime/engine.o: runtime/engine.c runtime/engine.h \
-                  graph/graph.h ops/ops.h core/tensor.h core/types.h
-	$(CC) $(CFLAGS) -c runtime/engine.c -o runtime/engine.o
 
 tests/test_engine.o: tests/test_engine.c runtime/engine.h \
                      graph/graph.h core/tensor.h
@@ -160,3 +156,20 @@ quantization/quant.o: quantization/quant.c quantization/quant.h \
 tests/test_quant.o: tests/test_quant.c quantization/quant.h core/tensor.h
 	$(CC) $(CFLAGS) -Iquantization -c tests/test_quant.c \
 	    -o tests/test_quant.o
+
+demo: core/tensor.o core/allocator.o graph/graph.o \
+      ops/matmul.o ops/activations.o ops/conv1d.o \
+      runtime/engine.o importer/onnx.o tools/profiler.o \
+      tools/demo_acousticleaknet.o
+	$(CC) $(CFLAGS) -Itools -Iimporter -O2 -o demo \
+	    core/tensor.o core/allocator.o graph/graph.o \
+	    ops/matmul.o ops/activations.o ops/conv1d.o \
+	    runtime/engine.o importer/onnx.o tools/profiler.o \
+	    tools/demo_acousticleaknet.o -lm
+
+tools/demo_acousticleaknet.o: tools/demo_acousticleaknet.c \
+    core/tensor.h core/allocator.h graph/graph.h \
+    runtime/engine.h importer/onnx.h tools/profiler.h
+	$(CC) $(CFLAGS) -Itools -Iimporter -O2 \
+	    -c tools/demo_acousticleaknet.c \
+	    -o tools/demo_acousticleaknet.o
