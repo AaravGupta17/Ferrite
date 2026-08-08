@@ -24,11 +24,11 @@ core/allocator.o: core/allocator.c core/allocator.h core/tensor.h core/types.h
 tests/test_allocator.o: tests/test_allocator.c core/allocator.h core/tensor.h
 	$(CC) $(CFLAGS) -c tests/test_allocator.c -o tests/test_allocator.o
 
-test_ops: core/tensor.o ops/matmul.o ops/activations.o tests/test_ops.o
-	$(CC) $(CFLAGS) -o test_ops core/tensor.o ops/matmul.o ops/activations.o tests/test_ops.o -lm
-
-ops/matmul.o: ops/matmul.c ops/ops.h core/tensor.h core/types.h
-	$(CC) $(CFLAGS) -c ops/matmul.c -o ops/matmul.o
+test_ops: core/tensor.o ops/matmul.o ops/activations.o simd/matmul_avx2.o tests/test_ops.o
+	$(CC) $(CFLAGS) -o test_ops core/tensor.o ops/matmul.o ops/activations.o simd/matmul_avx2.o tests/test_ops.o -lm
+	
+ops/matmul.o: ops/matmul.c ops/ops.h core/tensor.h core/types.h simd/matmul_avx2.h
+	$(CC) $(CFLAGS) -Isimd -c ops/matmul.c -o ops/matmul.
 
 ops/activations.o: ops/activations.c ops/ops.h core/tensor.h core/types.h
 	$(CC) $(CFLAGS) -c ops/activations.c -o ops/activations.o
@@ -46,10 +46,10 @@ tests/test_graph.o: tests/test_graph.c graph/graph.h core/tensor.h
 	$(CC) $(CFLAGS) -c tests/test_graph.c -o tests/test_graph.o
 
 test_engine: core/tensor.o core/allocator.o graph/graph.o \
-             ops/matmul.o ops/activations.o \
+             ops/matmul.o ops/activations.o simd/matmul_avx2.o \
              runtime/engine.o tests/test_engine.o
 	$(CC) $(CFLAGS) -o test_engine core/tensor.o core/allocator.o \
-	    graph/graph.o ops/matmul.o ops/activations.o \
+	    graph/graph.o ops/matmul.o ops/activations.o simd/matmul_avx2.o \
 	    runtime/engine.o tests/test_engine.o -lm
 
 tests/test_engine.o: tests/test_engine.c runtime/engine.h \
@@ -68,9 +68,9 @@ importer/onnx.o: importer/onnx.c importer/onnx.h \
 tests/test_onnx.o: tests/test_onnx.c importer/onnx.h graph/graph.h
 	$(CC) $(CFLAGS) -Iimporter -c tests/test_onnx.c -o tests/test_onnx.o
 
-bench_matmul: core/tensor.o ops/matmul.o ops/activations.o tools/bench_matmul.o
+bench_matmul: core/tensor.o ops/matmul.o ops/activations.o simd/matmul_avx2.o tools/bench_matmul.o
 	$(CC) $(CFLAGS) -O2 -o bench_matmul core/tensor.o ops/matmul.o \
-	    ops/activations.o tools/bench_matmul.o -lm
+	    ops/activations.o simd/matmul_avx2.o tools/bench_matmul.o -lm
 
 tools/bench_matmul.o: tools/bench_matmul.c core/tensor.h ops/ops.h
 	$(CC) $(CFLAGS) -O2 -Itools -c tools/bench_matmul.c -o tools/bench_matmul.o
@@ -112,9 +112,9 @@ tests/test_planner.o: tests/test_planner.c planner/memory_planner.h \
 	    -o tests/test_planner.o
 
 test_conv1d: core/tensor.o core/allocator.o ops/matmul.o ops/activations.o \
-             ops/conv1d.o tests/test_conv1d.o
+             ops/conv1d.o simd/matmul_avx2.o tests/test_conv1d.o
 	$(CC) $(CFLAGS) -o test_conv1d core/tensor.o core/allocator.o \
-	    ops/matmul.o ops/activations.o ops/conv1d.o \
+	    ops/matmul.o ops/activations.o ops/conv1d.o simd/matmul_avx2.o \
 	    tests/test_conv1d.o -lm
 
 ops/conv1d.o: ops/conv1d.c ops/ops.h core/tensor.h core/types.h
@@ -132,10 +132,10 @@ tools/profiler.o: tools/profiler.c tools/profiler.h
 	$(CC) $(CFLAGS) -Itools -c tools/profiler.c -o tools/profiler.o
 
 test_profiler: core/tensor.o core/allocator.o graph/graph.o \
-               ops/matmul.o ops/activations.o runtime/engine.o \
+               ops/matmul.o ops/activations.o simd/matmul_avx2.o runtime/engine.o \
                tools/profiler.o tests/test_profiler.o
 	$(CC) $(CFLAGS) -Itools -o test_profiler core/tensor.o core/allocator.o \
-	    graph/graph.o ops/matmul.o ops/activations.o \
+	    graph/graph.o ops/matmul.o ops/activations.o simd/matmul_avx2.o \
 	    runtime/engine.o tools/profiler.o tests/test_profiler.o -lm
 
 tests/test_profiler.o: tests/test_profiler.c runtime/engine.h \
@@ -158,15 +158,15 @@ tests/test_quant.o: tests/test_quant.c quantization/quant.h core/tensor.h
 	    -o tests/test_quant.o
 
 demo: core/tensor.o core/allocator.o graph/graph.o \
-      ops/matmul.o ops/activations.o ops/conv1d.o \
+      ops/matmul.o ops/activations.o ops/conv1d.o simd/matmul_avx2.o \
       runtime/engine.o importer/onnx.o tools/profiler.o \
       tools/demo_acousticleaknet.o
 	$(CC) $(CFLAGS) -Itools -Iimporter -O2 -o demo \
 	    core/tensor.o core/allocator.o graph/graph.o \
-	    ops/matmul.o ops/activations.o ops/conv1d.o \
+	    ops/matmul.o ops/activations.o ops/conv1d.o simd/matmul_avx2.o \
 	    runtime/engine.o importer/onnx.o tools/profiler.o \
 	    tools/demo_acousticleaknet.o -lm
-
+		
 tools/demo_acousticleaknet.o: tools/demo_acousticleaknet.c \
     core/tensor.h core/allocator.h graph/graph.h \
     runtime/engine.h importer/onnx.h tools/profiler.h

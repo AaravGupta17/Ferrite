@@ -23,7 +23,7 @@
  * C: [M, N]  (caller allocates)
  */
 FeStatus fe_matmul(const FeTensor *A, const FeTensor *B, FeTensor *C);
-
+FeStatus fe_matmul_scalar(const FeTensor *A, const FeTensor *B, FeTensor *C);
 /*
  * Matrix multiplication with bias: C = A @ W + b
  *
@@ -80,3 +80,4 @@ FeStatus fe_conv1d(const FeTensor *input, const FeTensor *weight,
 FeStatus fe_im2col(const FeTensor *input, FeTensor *col,
                    int K, int stride, int pad,
                    int batch_idx);
+

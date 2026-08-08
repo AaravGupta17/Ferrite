@@ -1,5 +1,6 @@
 // ops/matmul.c
 #include "ops.h"
+#include "matmul_avx2.h"
 #include <string.h>
 #include <assert.h>
 
@@ -7,17 +8,17 @@
  * Naive matmul: C = A @ B
  *
  * This is the reference implementation — correct but not optimized.
- * It exists to validate correctness before we add SIMD kernels.
- * The SIMD implementation in simd/ will replace the inner loop.
+ * It exists to validate correctness before we add SIMD kernels, and
+ * serves as the fallback path on hardware without AVX2.
  *
  * Memory access pattern:
  *   A[i][k] — row-major access, stride 1 in inner loop. Cache-friendly.
  *   B[k][j] — column access, stride N in inner loop. Cache-unfriendly.
  *
  * This is the fundamental matmul performance problem.
- * We measure this, then fix it with tiling in the SIMD module.
+ * fe_matmul_avx2 (simd/matmul_avx2.c) fixes this with tiling.
  */
-FeStatus fe_matmul(const FeTensor *A, const FeTensor *B, FeTensor *C) {
+FeStatus fe_matmul_scalar(const FeTensor *A, const FeTensor *B, FeTensor *C) {
     if (!A || !B || !C) return FE_ERR_NULL;
 
     /* Shape validation */
@@ -58,6 +59,23 @@ FeStatus fe_matmul(const FeTensor *A, const FeTensor *B, FeTensor *C) {
     }
 
     return FE_OK;
+}
+
+/*
+ * Public entry point: C = A @ B
+ *
+ * Dispatches to the AVX2 kernel when the CPU supports it, falling
+ * back to the scalar reference implementation otherwise — either on
+ * unsupported hardware, or if the AVX2 path returns anything other
+ * than FE_OK.
+ */
+FeStatus fe_matmul(const FeTensor *A, const FeTensor *B, FeTensor *C) {
+    if (fe_cpu_has_avx2()) {
+        FeStatus s = fe_matmul_avx2(A, B, C);
+        if (s == FE_OK) return s;
+        /* fall through to scalar on any AVX2-path failure */
+    }
+    return fe_matmul_scalar(A, B, C);
 }
 
 FeStatus fe_linear(const FeTensor *A, const FeTensor *W,
