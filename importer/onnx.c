@@ -287,24 +287,24 @@ static FeStatus parse_graph(FePbReader *r, FeGraph *g,
 
         switch (field) {
             case 1: { /* node */
-    if (!fe_pb_bytes(r, &sub_data, &sub_len)) return FE_ERR_SHAPE;
-    FePbReader sub;
-    fe_pb_init(&sub, sub_data, sub_len);
-    FeStatus s = parse_node(&sub, g);
-    if (s != FE_OK) return s;
-    break;
-}
-case 5: { /* initializer — weight tensor */
-    if (!fe_pb_bytes(r, &sub_data, &sub_len)) return FE_ERR_SHAPE;
-    FePbReader sub;
-    fe_pb_init(&sub, sub_data, sub_len);
-    FeStatus s = parse_initializer(&sub, g, weight_arena);
-    if (s != FE_OK) return s;
-    break;
-}
-default:
-    fe_pb_skip(r, wtype);
-    break;
+                if (!fe_pb_bytes(r, &sub_data, &sub_len)) return FE_ERR_SHAPE;
+                FePbReader sub;
+                fe_pb_init(&sub, sub_data, sub_len);
+                FeStatus s = parse_node(&sub, g);
+                if (s != FE_OK) return s;
+                break;
+            }
+            case 5: { /* initializer — weight tensor */
+                if (!fe_pb_bytes(r, &sub_data, &sub_len)) return FE_ERR_SHAPE;
+                FePbReader sub;
+                fe_pb_init(&sub, sub_data, sub_len);
+                FeStatus s = parse_initializer(&sub, g, weight_arena);
+                if (s != FE_OK) return s;
+                break;
+            }
+            default:
+                fe_pb_skip(r, wtype);
+                break;
         }
     }
     return FE_OK;

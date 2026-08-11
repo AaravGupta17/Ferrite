@@ -42,6 +42,9 @@ FeTensor *fe_tensor_alloc(FeDtype dtype, int ndim, const int *shape);
 FeTensor *fe_tensor_from_data(void *data, FeDtype dtype,
                                int ndim, const int *shape);
 
+FeTensor *fe_tensor_slice(const FeTensor *t, int axis, int start, int len);
+
+                               
 /*
  * Free tensor metadata. If owns_data, also frees the buffer.
  */

@@ -206,3 +206,27 @@ void fe_tensor_print(const FeTensor *t) {
     printf("), contiguous=%s, nbytes=%zu]\n",
            fe_tensor_is_contiguous(t) ? "true" : "false", t->nbytes);
 }
+
+FeTensor *fe_tensor_slice(const FeTensor *t, int axis, int start, int len) {
+    assert(axis >= 0 && axis < t->ndim);
+    assert(start >= 0 && len > 0 && start + len <= t->shape[axis]);
+
+    FeTensor *view = calloc(1, sizeof(FeTensor));
+    if (!view) return NULL;
+
+    *view = *t;                 /* copy all fields, including strides (unchanged) */
+    view->owns_data = false;    /* a view never owns memory */
+    view->shape[axis] = len;    /* only this axis's shape changes */
+
+    /* Shift the data pointer forward by `start` steps along `axis`.
+     * strides[axis] tells us how many elements to skip per step;
+     * multiply by element size to get a byte offset. */
+    size_t elem = fe_dtype_size(t->dtype);
+    view->data = (char *)t->data + (size_t)start * (size_t)t->strides[axis] * elem;
+
+    /* Recompute nbytes for the new (smaller) shape */
+    view->nbytes = elem;
+    for (int i = 0; i < view->ndim; i++) view->nbytes *= (size_t)view->shape[i];
+
+    return view;
+}

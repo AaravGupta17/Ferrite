@@ -46,6 +46,25 @@ static void test_reshape(void) {
     printf("PASS test_reshape\n");
 }
 
+
+static void test_slice(void) {
+    int shape[] = {4, 3};
+    FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    for (int i = 0; i < 12; i++) ((float *)t->data)[i] = (float)i;
+
+    FeTensor *s = fe_tensor_slice(t, 0, 1, 2);   /* rows 1..2 of a 4x3 tensor */
+    assert(s->shape[0] == 2 && s->shape[1] == 3);
+
+    int idx[] = {0, 0};
+    assert(fe_tensor_get_f32(s, idx) == 3.0f);   /* row 1, col 0 of original = element 3 */
+    idx[0] = 1; idx[1] = 2;
+    assert(fe_tensor_get_f32(s, idx) == 8.0f);   /* row 2, col 2 of original = element 8 */
+
+    fe_tensor_free(s);
+    fe_tensor_free(t);
+    printf("test_slice passed\n");
+}
+
 static void test_reshape_noncontiguous_fails(void) {
     int shape[] = {3, 4};
     FeTensor *t  = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
@@ -90,6 +109,7 @@ int main(void) {
     test_reshape();
     test_reshape_noncontiguous_fails();
     test_get_set_after_transpose();
+    test_slice();
     printf("\nAll tests passed.\n");
     return 0;
 }
