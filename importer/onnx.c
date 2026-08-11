@@ -212,18 +212,45 @@ static FeStatus parse_node(FePbReader *r, FeGraph *g) {
                 fe_pb_init(&ar, attr_data, attr_len);
 
                 char attr_name[64] = {0};
-                int  attr_type = 0;
-                int  int_val   = 0;
-                int  ints[8]   = {0};
-                int  n_ints    = 0;
+                int  ints[8] = {0};
+                int  n_ints  = 0;
 
-               while (!fe_pb_done(&ar)) {
+                while (!fe_pb_done(&ar)) {
                     int af, awt;
                     if (!fe_pb_tag(&ar, &af, &awt)) break;
-                    fprintf(stderr, "  attr field=%d wtype=%d\n", af, awt);
-                    fe_pb_skip(&ar, awt);
+                    switch (af) {
+                        case 1: { /* name */
+                            const unsigned char *d; size_t l;
+                            fe_pb_bytes(&ar, &d, &l);
+                            size_t c = l < 63 ? l : 63;
+                            memcpy(attr_name, d, c);
+                            attr_name[c] = 0;
+                            break;
+                        }
+                        case 7: { /* ints — repeated int64 */
+                            if (n_ints < 8)
+                                ints[n_ints++] = (int)fe_pb_varint(&ar);
+                            else fe_pb_varint(&ar);
+                            break;
+                        }
+                        case 8: { /* i — single int64, also used for repeated */
+                            if (n_ints < 8)
+                                ints[n_ints++] = (int)fe_pb_varint(&ar);
+                            else fe_pb_varint(&ar);
+                            break;
+                        }
+                        default: fe_pb_skip(&ar, awt); break;
+                    }
                 }
-                fprintf(stderr, "ATTR: name='%s'\n", attr_name);
+
+                if (strcmp(attr_name, "pads") == 0 && n_ints >= 2) {
+                    pads[0] = ints[0];
+                    pads[1] = ints[1];
+                } else if (strcmp(attr_name, "strides") == 0 && n_ints >= 1) {
+                    strides[0] = ints[0];
+                } else if (strcmp(attr_name, "kernel_shape") == 0 && n_ints >= 1) {
+                    kernel[0] = ints[0];
+                }
                 break;
             }
             default: fe_pb_skip(r, wtype); break;
@@ -267,62 +294,7 @@ static FeStatus parse_graph(FePbReader *r, FeGraph *g,
                 if (s != FE_OK) return s;
                 break;
             }
-            case 5: {
-                const unsigned char *attr_data;
-                size_t attr_len;
-                if (!fe_pb_bytes(r, &attr_data, &attr_len)) break;
-
-                FePbReader ar;
-                fe_pb_init(&ar, attr_data, attr_len);
-
-                char attr_name[64] = {0};
-                int  ints[8] = {0};
-                int  n_ints  = 0;
-
-                while (!fe_pb_done(&ar)) {
-                    int af, awt;
-                    if (!fe_pb_tag(&ar, &af, &awt)) break;
-                    switch (af) {
-                        case 1: { /* name */
-                            const unsigned char *d; size_t l;
-                            fe_pb_bytes(&ar, &d, &l);
-                            size_t c = l < 63 ? l : 63;
-                            memcpy(attr_name, d, c);
-                            attr_name[c] = 0;
-                            break;
-                        }
-                        case 7: { /* ints — repeated int64 */
-                            if (n_ints < 8)
-                                ints[n_ints++] = (int)fe_pb_varint(&ar);
-                            else fe_pb_varint(&ar);
-                            break;
-                        }
-                        case 8: { /* i — single int64, also used for repeated */
-                            if (n_ints < 8)
-                                ints[n_ints++] = (int)fe_pb_varint(&ar);
-                            else fe_pb_varint(&ar);
-                            break;
-                        }
-                        default: fe_pb_skip(&ar, awt); break;
-                    }
-                }
-
-                if (strcmp(attr_name, "pads") == 0 && n_ints >= 2) {
-                    pads[0] = ints[0];
-                    pads[1] = ints[1];
-                } else if (strcmp(attr_name, "strides") == 0 && n_ints >= 1) {
-                    strides[0] = ints[0];
-                } else if (strcmp(attr_name, "kernel_shape") == 0 && n_ints >= 1) {
-                    kernel[0] = ints[0];
-                }
-
-                fprintf(stderr, "ATTR: '%s' n_ints=%d [%d,%d]\n",
-                        attr_name, n_ints, ints[0], ints[1]);
-                break;
-            }
-            default: fe_pb_skip(r, wtype); break;
-        }
-    }
+            case 5: /* initializer — weight tensors, handled by parse_initializer */
             default:
                 fe_pb_skip(r, wtype);
                 break;
