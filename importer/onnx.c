@@ -212,70 +212,6 @@ static FeStatus parse_node(FePbReader *r, FeGraph *g) {
                 fe_pb_init(&ar, attr_data, attr_len);
 
                 char attr_name[64] = {0};
-                int  attr_type = 0;
-                int  int_val   = 0;
-                int  ints[8]   = {0};
-                int  n_ints    = 0;
-
-               while (!fe_pb_done(&ar)) {
-                    int af, awt;
-                    if (!fe_pb_tag(&ar, &af, &awt)) break;
-                    fprintf(stderr, "  attr field=%d wtype=%d\n", af, awt);
-                    fe_pb_skip(&ar, awt);
-                }
-                fprintf(stderr, "ATTR: name='%s'\n", attr_name);
-                break;
-            }
-            default: fe_pb_skip(r, wtype); break;
-        }
-    }
-    FeOpType op = op_type_from_string(op_str);
-    if ((int)op == -1) {
-        fprintf(stderr, "ONNX: unsupported op '%s', skipping\n", op_str);
-        return FE_OK;
-    }
-
-    if (node_name[0] == '\0') strncpy(node_name, op_str, FE_NAME_LEN - 1);
-
-    int idx = fe_graph_add_node(g, node_name, op,
-                                 inputs, n_in, outputs, n_out);
-    if (idx < 0) return FE_ERR_NOMEM;
-
-    /* Store conv attributes on the node */
-    if (op == FE_OP_CONV1D) {
-        g->nodes[idx].attrs.conv1d.pad    = pads[0];
-        g->nodes[idx].attrs.conv1d.stride = strides[0];
-    }
-
-    return FE_OK;
-}
-static FeStatus parse_graph(FePbReader *r, FeGraph *g,
-                              FeArena *weight_arena) {
-    while (!fe_pb_done(r)) {
-        int field, wtype;
-        if (!fe_pb_tag(r, &field, &wtype)) break;
-
-        const unsigned char *sub_data;
-        size_t               sub_len;
-
-        switch (field) {
-            case 1: { /* node */
-                if (!fe_pb_bytes(r, &sub_data, &sub_len)) return FE_ERR_SHAPE;
-                FePbReader sub;
-                fe_pb_init(&sub, sub_data, sub_len);
-                FeStatus s = parse_node(&sub, g);
-                if (s != FE_OK) return s;
-                break;
-            }
-            case 5: {
-                const unsigned char *attr_data;
-                size_t attr_len;
-                if (!fe_pb_bytes(r, &attr_data, &attr_len)) break;
-
-                FePbReader ar;
-                fe_pb_init(&ar, attr_data, attr_len);
-
-                char attr_name[64] = {0};
                 int  ints[8] = {0};
                 int  n_ints  = 0;
 
@@ -315,17 +251,60 @@ static FeStatus parse_graph(FePbReader *r, FeGraph *g,
                 } else if (strcmp(attr_name, "kernel_shape") == 0 && n_ints >= 1) {
                     kernel[0] = ints[0];
                 }
-
-                fprintf(stderr, "ATTR: '%s' n_ints=%d [%d,%d]\n",
-                        attr_name, n_ints, ints[0], ints[1]);
                 break;
             }
             default: fe_pb_skip(r, wtype); break;
         }
     }
-            default:
-                fe_pb_skip(r, wtype);
-                break;
+    FeOpType op = op_type_from_string(op_str);
+    if ((int)op == -1) {
+        fprintf(stderr, "ONNX: unsupported op '%s', skipping\n", op_str);
+        return FE_OK;
+    }
+
+    if (node_name[0] == '\0') strncpy(node_name, op_str, FE_NAME_LEN - 1);
+
+    int idx = fe_graph_add_node(g, node_name, op,
+                                 inputs, n_in, outputs, n_out);
+    if (idx < 0) return FE_ERR_NOMEM;
+
+    /* Store conv attributes on the node */
+    if (op == FE_OP_CONV1D) {
+        g->nodes[idx].attrs.conv1d.pad    = pads[0];
+        g->nodes[idx].attrs.conv1d.stride = strides[0];
+    }
+
+    return FE_OK;
+}
+static FeStatus parse_graph(FePbReader *r, FeGraph *g,
+                              FeArena *weight_arena) {
+    while (!fe_pb_done(r)) {
+        int field, wtype;
+        if (!fe_pb_tag(r, &field, &wtype)) break;
+
+        const unsigned char *sub_data;
+        size_t               sub_len;
+
+        switch (field) {
+            case 1: { /* node */
+    if (!fe_pb_bytes(r, &sub_data, &sub_len)) return FE_ERR_SHAPE;
+    FePbReader sub;
+    fe_pb_init(&sub, sub_data, sub_len);
+    FeStatus s = parse_node(&sub, g);
+    if (s != FE_OK) return s;
+    break;
+}
+case 5: { /* initializer — weight tensor */
+    if (!fe_pb_bytes(r, &sub_data, &sub_len)) return FE_ERR_SHAPE;
+    FePbReader sub;
+    fe_pb_init(&sub, sub_data, sub_len);
+    FeStatus s = parse_initializer(&sub, g, weight_arena);
+    if (s != FE_OK) return s;
+    break;
+}
+default:
+    fe_pb_skip(r, wtype);
+    break;
         }
     }
     return FE_OK;
@@ -398,4 +377,4 @@ FeStatus fe_onnx_load(FeGraph *graph, FeArena *weight_arena,
     }
 
     return status;
-}
+}   
