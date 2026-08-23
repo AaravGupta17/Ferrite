@@ -1,7 +1,16 @@
 CC     = gcc
 CFLAGS = -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime -Iimporter
 
-all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d test_profiler test_quant
+all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d test_profiler test_quant test_tensor_ser
+
+test_tensor_ser: core/tensor.o core/tensor_ser.o tests/test_tensor_ser.o
+	$(CC) $(CFLAGS) -o test_tensor_ser core/tensor.o core/tensor_ser.o tests/test_tensor_ser.o
+
+core/tensor_ser.o: core/tensor_ser.c core/tensor_ser.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -c core/tensor_ser.c -o core/tensor_ser.o
+
+tests/test_tensor_ser.o: tests/test_tensor_ser.c core/tensor_ser.h core/tensor.h
+	$(CC) $(CFLAGS) -c tests/test_tensor_ser.c -o tests/test_tensor_ser.o
 
 test_tensor: core/tensor.o tests/test_tensor.o
 	$(CC) $(CFLAGS) -o test_tensor core/tensor.o tests/test_tensor.o
