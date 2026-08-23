@@ -12,17 +12,18 @@ This guide explains each subsystem, how they connect, and how data flows through
 
 1. [Architecture](#architecture)
 2. [Core Data Structures (`core/`)](#core-data-structures)
-3. [Computation Graph (`graph/`)](#computation-graph)
-4. [Operator Kernels (`ops/`)](#operator-kernels)
-5. [SIMD Matmul (`simd/`)](#simd-matmul)
-6. [Memory Planner (`planner/`)](#memory-planner)
-7. [Execution Engine (`runtime/`)](#execution-engine)
-8. [ONNX Importer (`importer/`)](#onnx-importer)
-9. [Quantization (`quantization/`)](#quantization)
-10. [Profiling and Benchmarks (`tools/`)](#profiling-and-benchmarks)
-11. [Tests and Build System](#tests-and-build-system)
-12. [End-to-End Data Flow](#end-to-end-data-flow)
-13. [Known Limitations](#known-limitations)
+3. [Logging and Errors (`core/log.h`, `core/types.h`)](#logging-and-errors)
+4. [Computation Graph (`graph/`)](#computation-graph)
+5. [Operator Kernels (`ops/`)](#operator-kernels)
+6. [SIMD Matmul (`simd/`)](#simd-matmul)
+7. [Memory Planner (`planner/`)](#memory-planner)
+8. [Execution Engine (`runtime/`)](#execution-engine)
+9. [ONNX Importer (`importer/`)](#onnx-importer)
+10. [Quantization (`quantization/`)](#quantization)
+11. [Profiling and Benchmarks (`tools/`)](#profiling-and-benchmarks)
+12. [Tests and Build System](#tests-and-build-system)
+13. [End-to-End Data Flow](#end-to-end-data-flow)
+14. [Known Limitations](#known-limitations)
 
 ---
 
@@ -125,6 +126,31 @@ typedef struct {
 - `fe_arena_reset()` returns the bump pointer to zero. It preserves `peak` for profiling.
 - `fe_arena_alloc_tensor()` allocates both the `FeTensor` metadata and its data buffer, aligned to 64 bytes for SIMD.
 - **Two intended arenas.** A *weight arena*, allocated once at load, never reset. An *activation arena*, reset after every inference. This is the classic inference-runtime strategy.
+
+### `core/tensor_ser.h` / `core/tensor_ser.c` — serialization
+
+**Bottom line.** Tensors round-trip to disk as a versioned binary format. What is stored is the *logical contents*, not the struct.
+
+```
+magic "FETN" | u32 version | u32 dtype | u32 ndim | int32 shape[ndim]
+| u64 data_len | payload bytes (row-major, contiguous)
+```
+
+- All integers are **little-endian regardless of host**, written through explicit byte-shuffling helpers — the file is identical on any machine.
+- Strides, data pointer, and ownership are never serialized; they are layout details. Saving a non-contiguous tensor repacks it first via `fe_tensor_contiguous()`, so views save their logical contents.
+- Loading always produces a fresh **owning, row-major tensor** (`owns_data = true`), freed with `fe_tensor_free()`.
+- Readers are strict for v1: wrong magic, newer version, unknown dtype, impossible shape, a `data_len` that disagrees with the computed byte count, truncated payloads, and trailing garbage all fail loudly — `FE_ERR_IO` for structural corruption, `FE_ERR_DTYPE`/`FE_ERR_SHAPE` where the field names the problem. No partial state leaks: the output pointer is untouched on failure.
+- Versioning starts at 1 on purpose: readers reject `version > 1`, so v2 can change the layout without old builds misreading it.
+
+---
+
+## Logging and Errors
+
+**Bottom line.** Two small mechanisms cover all diagnostics: `FeStatus` return codes and a level-filtered stderr logger. Neither appears in hot paths.
+
+- **Errors.** Every fallible public function returns `FeStatus`; `FE_OK` means full success with all outputs written. The codes (`core/types.h`) name the failure class: `FE_ERR_NULL/SHAPE/DTYPE/NOMEM/BOUNDS/IO`. Constructors that return pointers signal failure with `NULL`. Callees never free caller memory or partially mutate outputs on error.
+- **Logging.** `fe_log_debug/info/warn/error(...)` macros (`core/log.h`) write `[ferrite LEVEL file:line] msg` to stderr. Levels filter at compile time via `FERRITE_LOG_LEVEL` (default WARN) — filtered messages compile to nothing.
+- **Policy.** Logging is for load/init-time diagnostics only: model import, runtime init, fatal dispatch errors. Kernels never log and never allocate (hot-path rule).
 
 ---
 
@@ -363,7 +389,17 @@ relu0          1      0.065     0.065   12.0%
 
 ## Tests and Build System
 
-The `Makefile` builds one test binary per subsystem plus two benchmark binaries:
+**CMake is canonical.** One command configures and builds everything; CTest runs the suite:
+
+```sh
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build
+```
+
+The build produces one static library per subsystem (`libferrite_core`, `libferrite_graph`, …) linked strictly downward, one test binary per subsystem, and opt-in benchmarks (`--target bench_avx2`). Sanitizers are probed at configure time and enabled when the toolchain ships them (`FERRITE_SANITIZE=OFF` to force off). On Windows/MinGW each executable copies the matching `libwinpthread-1.dll` beside itself so binaries do not resolve a stale copy from PATH.
+
+A Unix-oriented `Makefile` with equivalent targets is kept for WSL during the transition.
 
 | Target | Covers |
 |---|---|
@@ -377,6 +413,7 @@ The `Makefile` builds one test binary per subsystem plus two benchmark binaries:
 | `test_conv1d` | im2col + conv1d |
 | `test_profiler` | timing/recording |
 | `test_quant` | INT8 quantization round-trip |
+| `test_tensor_ser` | serialization round-trips + corruption rejection |
 | `bench_matmul` / `bench_matmul_avx2` / `bench_avx2` | performance measurements |
 
 Build flags:
@@ -385,7 +422,7 @@ Build flags:
 -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g
 ```
 
-Every test runs under AddressSanitizer + UndefinedBehaviorSanitizer. AVX2 targets add `-O3 -mavx2 -mfma`.
+Every test runs under AddressSanitizer + UndefinedBehaviorSanitizer (where available). AVX2 targets add `-O3 -mavx2 -mfma`.
 
 `tests/test_engine.c` is a good end-to-end example: it builds a `1→4→8→3` MLP by hand (Linear → ReLU → Linear → Softmax), sets uniform weights (`0.1f`), and verifies the softmax output is exactly `1/3` per class. `tests/tiny_mlp.onnx` exercises the importer against a real ONNX file.
 
