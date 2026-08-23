@@ -54,3 +54,24 @@ dkms.conf
 # debug information files
 *.dwo
 .idea/
+
+# Ferrite build outputs (Makefile binaries, stray files)
+/build/
+/cmake-build-*/
+/test_tensor
+/test_allocator
+/test_ops
+/test_graph
+/test_engine
+/test_onnx
+/test_planner
+/test_conv1d
+/test_profiler
+/test_quant
+/test_tensor_ser
+/bench_matmul
+/bench_matmul_avx2
+/bench_avx2
+/demo
+/float32
+/int8
