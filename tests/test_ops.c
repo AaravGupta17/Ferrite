@@ -1,5 +1,6 @@
 // tests/test_ops.c
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 #include <assert.h>
 #include "../core/tensor.h"
