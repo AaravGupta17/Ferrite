@@ -11,19 +11,20 @@ This file tells an agent or contributor how to work in this repo: what the proje
 ## Quickstart
 
 ```sh
-make all          # builds all test binaries
-make test_onnx    # or any single target below
-make bench_avx2   # performance target (adds -O3 -mavx2 -mfma)
+cmake -S . -B build -G Ninja   # configure (GCC/Clang required)
+cmake --build build            # builds all test binaries
+cmake --build build --target bench_avx2   # performance target (-O3 -mavx2 -mfma)
 ```
 
-Every test binary builds with `-fsanitize=address,undefined`. Run one to verify a change:
+Run the suite or one binary to verify a change:
 
 ```sh
-./test_tensor
-./test_engine
+ctest --test-dir build          # all tests, from anywhere
+./build/test_tensor             # single binary
+./build/test_engine
 ```
 
-**Platform caveat.** The Makefile is Unix-oriented (`gcc`, `rm`, POSIX clock). This repo is developed on a Windows/CLion machine. `temps/roadmap.md` Phase 0 plans a `CMakeLists.txt`; until it lands, prefer the Makefile in WSL. `.idea/` is currently untracked.
+**Platform caveat.** Binaries land in `build/` as `*.exe` on Windows. On Windows/MinGW without sanitizers, each executable copies `libwinpthread-1.dll` next to itself at build time — run tests through CTest or from `build/`, not by copying exes elsewhere.
 
 ---
 
@@ -31,7 +32,7 @@ Every test binary builds with `-fsanitize=address,undefined`. Run one to verify 
 
 | Directory | Role | Key files |
 |---|---|---|
-| `core/` | Universal data structures: strided tensors, arena allocator, shared types | `types.h`, `tensor.c/h`, `allocator.c/h` |
+| `core/` | Universal data structures: strided tensors, arena allocator, serialization, logging, shared types | `types.h`, `tensor.c/h`, `tensor_ser.c/h`, `allocator.c/h`, `log.c/h` |
 | `graph/` | Computation-graph IR, tensor registry, Kahn topological sort | `graph.c/h` |
 | `ops/` | Operator kernels: matmul, linear, relu, softmax, bias_add, conv1d (im2col) | `ops.h`, `matmul.c`, `activations.c`, `conv1d.c` |
 | `simd/` | AVX2 tiled matmul with runtime CPUID detection | `matmul_avx2.c/h` |
@@ -60,8 +61,11 @@ Layer dependencies point downward only: `importer/` → `graph/` → `planner/` 
 ## Code Conventions
 
 - **Language.** C11. Build flags: `-std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g`.
+- **Build.** CMake is canonical (`cmake -S . -B build && cmake --build build`; `ctest --test-dir build` runs the suite). Requires GCC/Clang — MSVC lacks the POSIX clock the profiler uses.
 - **Naming.** Public API prefix `fe_`. Header guards `FERRITE_X_H`. Files `module.c`/`module.h`.
-- **Returns.** Every public function returns `FeStatus` (`FE_OK`, `FE_ERR_NULL/SHAPE/DTYPE/NOMEM/BOUNDS`) unless it is a constructor.
+- **Returns.** Every public function returns `FeStatus` (`FE_OK`, `FE_ERR_NULL/SHAPE/DTYPE/NOMEM/BOUNDS/IO`) unless it is a constructor.
+- **Configuration.** Constants live in headers (`FERRITE_MAX_DIMS`, `FERRITE_LOG_LEVEL`). No config machinery exists or is wanted until a real runtime knob appears.
+- **Logging.** `core/log.h` for load/init-time diagnostics only; kernels never log (hot-path rule).
 - **Kernel contract** (`ops/ops.h`): inputs read-only, output caller-allocated with correct shape, no allocation inside kernels, validate pointers/dtypes/shapes before touching data.
 - **Tensors** reference graph entries by **index**, never by pointer. `FeTensor.data` may be `NULL` until memory is assigned.
 - **Docs with code.** A change is not done until its doc is done. Update header comments in the same commit.
