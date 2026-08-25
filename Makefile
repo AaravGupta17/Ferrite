@@ -24,9 +24,8 @@ core/allocator.o: core/allocator.c core/allocator.h core/tensor.h core/types.h
 tests/test_allocator.o: tests/test_allocator.c core/allocator.h core/tensor.h
 	$(CC) $(CFLAGS) -c tests/test_allocator.c -o tests/test_allocator.o
 
-test_ops: core/tensor.o ops/matmul.o ops/activations.o simd/matmul_avx2.o tests/test_ops.o
-	$(CC) $(CFLAGS) -o test_ops core/tensor.o ops/matmul.o ops/activations.o simd/matmul_avx2.o tests/test_ops.o -lm
-	
+test_ops: core/tensor.o ops/matmul.o ops/activations.o ops/elementwise.o ops/reduce.o ops/stability.o simd/matmul_avx2.o tests/test_ops.o
+	$(CC) $(CFLAGS) -o test_ops core/tensor.o ops/matmul.o ops/activations.o ops/elementwise.o ops/reduce.o ops/stability.o simd/matmul_avx2.o tests/test_ops.o -lm
 ops/matmul.o: ops/matmul.c ops/ops.h core/tensor.h core/types.h simd/matmul_avx2.h
 	$(CC) $(CFLAGS) -Isimd -c ops/matmul.c -o ops/matmul.
 
@@ -173,3 +172,12 @@ tools/demo_acousticleaknet.o: tools/demo_acousticleaknet.c \
 	$(CC) $(CFLAGS) -Itools -Iimporter -O2 \
 	    -c tools/demo_acousticleaknet.c \
 	    -o tools/demo_acousticleaknet.o
+
+ops/elementwise.o: ops/elementwise.c ops/ops.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -c ops/elementwise.c -o ops/elementwise.o
+
+ops/reduce.o: ops/reduce.c ops/ops.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -c ops/reduce.c -o ops/reduce.o
+
+ops/stability.o: ops/stability.c ops/ops.h core/tensor.h core/types.h
+	$(CC) $(CFLAGS) -c ops/stability.c -o ops/stability.o

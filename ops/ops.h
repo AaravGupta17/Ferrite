@@ -81,3 +81,22 @@ FeStatus fe_im2col(const FeTensor *input, FeTensor *col,
                    int K, int stride, int pad,
                    int batch_idx);
 
+FeStatus fe_add(const FeTensor *a, const FeTensor *b, FeTensor *out);
+FeStatus fe_sub(const FeTensor *a, const FeTensor *b, FeTensor *out);
+FeStatus fe_mul(const FeTensor *a, const FeTensor *b, FeTensor *out);
+FeStatus fe_div(const FeTensor *a, const FeTensor *b, FeTensor *out);
+
+FeStatus fe_add_scalar(const FeTensor *a, float s, FeTensor *out);
+FeStatus fe_sub_scalar(const FeTensor *a, float s, FeTensor *out);
+FeStatus fe_mul_scalar(const FeTensor *a, float s, FeTensor *out);
+FeStatus fe_div_scalar(const FeTensor *a, float s, FeTensor *out);
+FeStatus fe_neg(const FeTensor *a, FeTensor *out);
+
+FeStatus fe_sum(const FeTensor *in, int axis, FeTensor *out);
+FeStatus fe_max(const FeTensor *in, int axis, FeTensor *out);
+FeStatus fe_min(const FeTensor *in, int axis, FeTensor *out);
+/* Returns a scalar via *out, not a tensor — see comment above the definition. */
+FeStatus fe_dot(const FeTensor *a, const FeTensor *b, float *out);
+
+FeStatus fe_logsumexp(const FeTensor *in, float *out);
+FeStatus fe_stable_exp_normalize(const FeTensor *in, FeTensor *out);

@@ -123,12 +123,124 @@ static void test_softmax_numerical_stability(void) {
     printf("PASS test_softmax_numerical_stability\n");
 }
 
+static void test_elementwise(void) {
+    int shape[] = {4};
+    FeTensor *a = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+    FeTensor *b = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+    FeTensor *out = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+
+    for (int i = 0; i < 4; i++) {
+        ((float *)a->data)[i] = (float)(i + 1);   /* 1,2,3,4 */
+        ((float *)b->data)[i] = 2.0f;
+    }
+
+    assert(fe_add(a, b, out) == FE_OK);
+    assert(((float *)out->data)[0] == 3.0f && ((float *)out->data)[3] == 6.0f);
+
+    assert(fe_mul(a, b, out) == FE_OK);
+    assert(((float *)out->data)[0] == 2.0f && ((float *)out->data)[3] == 8.0f);
+
+    assert(fe_div(a, b, out) == FE_OK);
+    assert(((float *)out->data)[0] == 0.5f && ((float *)out->data)[3] == 2.0f);
+
+    fe_tensor_free(a); fe_tensor_free(b); fe_tensor_free(out);
+    printf("PASS test_elementwise\n");
+}
+
+static void test_scalar_ops(void) {
+    int shape[] = {3};
+    FeTensor *a = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+    FeTensor *out = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+
+    ((float *)a->data)[0] = 1.0f;
+    ((float *)a->data)[1] = 2.0f;
+    ((float *)a->data)[2] = 3.0f;
+
+    assert(fe_mul_scalar(a, 10.0f, out) == FE_OK);
+    assert(((float *)out->data)[0] == 10.0f && ((float *)out->data)[2] == 30.0f);
+
+    assert(fe_neg(a, out) == FE_OK);
+    assert(((float *)out->data)[0] == -1.0f && ((float *)out->data)[2] == -3.0f);
+
+    fe_tensor_free(a); fe_tensor_free(out);
+    printf("PASS test_scalar_ops\n");
+}
+
+static void test_reduce(void) {
+    int shape[] = {2, 3};
+    FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    /* [[1,2,3],[4,5,6]] */
+    float vals[] = {1,2,3,4,5,6};
+    for (int i = 0; i < 6; i++) ((float *)t->data)[i] = vals[i];
+
+    int out_shape[] = {2};
+    FeTensor *out = fe_tensor_alloc(DTYPE_FLOAT32, 1, out_shape);
+
+    assert(fe_sum(t, 1, out) == FE_OK);     /* sum along axis 1 -> [6, 15] */
+    assert(((float *)out->data)[0] == 6.0f);
+    assert(((float *)out->data)[1] == 15.0f);
+
+    assert(fe_max(t, 1, out) == FE_OK);
+    assert(((float *)out->data)[0] == 3.0f);
+    assert(((float *)out->data)[1] == 6.0f);
+
+    fe_tensor_free(t); fe_tensor_free(out);
+    printf("PASS test_reduce\n");
+}
+
+static void test_dot(void) {
+    int shape[] = {3};
+    FeTensor *a = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+    FeTensor *b = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+
+    float av[] = {1, 2, 3};
+    float bv[] = {4, 5, 6};
+    for (int i = 0; i < 3; i++) {
+        ((float *)a->data)[i] = av[i];
+        ((float *)b->data)[i] = bv[i];
+    }
+
+    float result;
+    assert(fe_dot(a, b, &result) == FE_OK);
+    assert(result == 32.0f);   /* 1*4 + 2*5 + 3*6 = 32 */
+
+    fe_tensor_free(a); fe_tensor_free(b);
+    printf("PASS test_dot\n");
+}
+
+static void test_stability(void) {
+    int shape[] = {3};
+    FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+    ((float *)t->data)[0] = 1000.0f;
+    ((float *)t->data)[1] = 1001.0f;
+    ((float *)t->data)[2] = 1002.0f;
+
+    FeTensor *out = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+    assert(fe_stable_exp_normalize(t, out) == FE_OK);   /* must not overflow/NaN */
+
+    float sum = ((float *)out->data)[0] + ((float *)out->data)[1] + ((float *)out->data)[2];
+    assert(fabsf(sum - 1.0f) < 0.0001f);   /* valid probability distribution */
+
+    float lse;
+    assert(fe_logsumexp(t, &lse) == FE_OK);
+    assert(lse > 1000.0f && lse < 1003.0f);   /* sane range, no overflow */
+
+    fe_tensor_free(t); fe_tensor_free(out);
+    printf("PASS test_stability\n");
+}
+
 int main(void) {
     test_matmul_identity();
     test_matmul_known();
     test_relu();
     test_softmax_sums_to_one();
     test_softmax_numerical_stability();
+    test_elementwise();
+    test_scalar_ops();
+    test_reduce();
+    test_dot();
+    test_stability();
     printf("\nAll tests passed.\n");
     return 0;
 }
+

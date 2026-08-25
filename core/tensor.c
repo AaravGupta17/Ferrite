@@ -230,3 +230,61 @@ FeTensor *fe_tensor_slice(const FeTensor *t, int axis, int start, int len) {
 
     return view;
 }
+
+FeTensor *fe_tensor_broadcast_to(const FeTensor *t, int ndim, const int *target_shape) {
+    assert(ndim >= t->ndim);   /* can only broadcast to equal or more dims */
+
+    FeTensor *view = calloc(1, sizeof(FeTensor));
+    if (!view) return NULL;
+
+    *view = *t;
+    view->owns_data = false;
+    view->ndim = ndim;
+
+    /* Walk both shapes from the trailing dimension backward */
+    int diff = ndim - t->ndim;   /* how many leading dims t is missing */
+
+    for (int i = ndim - 1; i >= 0; i--) {
+        int t_axis = i - diff;   /* corresponding axis in t, or "doesn't exist" if < 0 */
+        int t_size = (t_axis >= 0) ? t->shape[t_axis] : 1;
+
+        view->shape[i] = target_shape[i];
+
+        if (t_size == target_shape[i]) {
+            /* Sizes already match — keep t's real stride (or 0 if t_axis doesn't exist) */
+            view->strides[i] = (t_axis >= 0) ? t->strides[t_axis] : 0;
+        } else if (t_size == 1) {
+            /* Broadcast this axis: same memory read repeatedly */
+            view->strides[i] = 0;
+        } else {
+            free(view);
+            return NULL;   /* incompatible shapes */
+        }
+    }
+
+    return view;
+}
+
+bool fe_tensor_allclose(const FeTensor *a, const FeTensor *b, float tol) {
+    if (a->ndim != b->ndim) return false;
+    for (int i = 0; i < a->ndim; i++) {
+        if (a->shape[i] != b->shape[i]) return false;
+    }
+    if (a->dtype != b->dtype || a->dtype != DTYPE_FLOAT32) return false;
+
+    int numel = fe_tensor_numel(a);
+    int idx[FERRITE_MAX_DIMS] = {0};
+
+    for (int i = 0; i < numel; i++) {
+        float va = fe_tensor_get_f32(a, idx);
+        float vb = fe_tensor_get_f32(b, idx);
+        if (fabsf(va - vb) > tol) return false;
+
+        for (int d = a->ndim - 1; d >= 0; d--) {
+            if (++idx[d] < a->shape[d]) break;
+            idx[d] = 0;
+        }
+    }
+    return true;
+}
+

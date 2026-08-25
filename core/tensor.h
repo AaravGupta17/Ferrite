@@ -4,6 +4,7 @@
 
 #include "types.h"
 #include <stdbool.h>
+#include <math.h>
 
 /*
  * FeTensor — the universal data structure in Ferrite.
@@ -43,8 +44,8 @@ FeTensor *fe_tensor_from_data(void *data, FeDtype dtype,
                                int ndim, const int *shape);
 
 FeTensor *fe_tensor_slice(const FeTensor *t, int axis, int start, int len);
-
-                               
+FeTensor *fe_tensor_broadcast_to(const FeTensor *t, int ndim, const int *target_shape);
+bool fe_tensor_allclose(const FeTensor *a, const FeTensor *b, float tol);
 /*
  * Free tensor metadata. If owns_data, also frees the buffer.
  */
