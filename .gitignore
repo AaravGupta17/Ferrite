@@ -53,14 +53,11 @@ dkms.conf
 
 # debug information files
 *.dwo
-<<<<<<< HEAD
-.idea/
-test_tensor
-demo
-=======
+
+# CLion project files
 .idea/
 
-# Ferrite build outputs (Makefile binaries, stray files)
+# Ferrite build outputs (Makefile binaries, CMake build dirs, stray files)
 /build/
 /cmake-build-*/
 /test_tensor
@@ -80,4 +77,3 @@ demo
 /demo
 /float32
 /int8
->>>>>>> 490410538f2a9cfdb3c680e4fa4a6df122a4d9fe
