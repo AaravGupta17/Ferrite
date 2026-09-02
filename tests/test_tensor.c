@@ -151,6 +151,32 @@ static void test_allclose(void) {
     printf("PASS test_allclose\n");
 }
 
+static void test_float64(void) {
+    /* The dtype enum must cover float64 with the correct element size,
+     * and the tensor machinery (alloc, contiguous repack, copy) must
+     * treat it as an opaque 8-byte element just like any other dtype. */
+    assert(fe_dtype_size(DTYPE_FLOAT64) == 8);
+
+    int shape[] = {2, 3};
+    FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT64, 2, shape);
+    assert(t != NULL);
+    assert(t->dtype == DTYPE_FLOAT64);
+    assert(t->nbytes == 2 * 3 * 8);
+
+    for (int i = 0; i < 6; i++)
+        ((double *)t->data)[i] = 0.5 * i;
+
+    /* Copy preserves bytes across dtypes. */
+    FeTensor *u = fe_tensor_alloc(DTYPE_FLOAT64, 2, shape);
+    assert(fe_tensor_copy(u, t) == FE_OK);
+    for (int i = 0; i < 6; i++)
+        assert(((double *)u->data)[i] == 0.5 * i);
+
+    fe_tensor_free(u);
+    fe_tensor_free(t);
+    printf("PASS test_float64\n");
+}
+
 int main(void) {
     test_alloc_strides();
     test_transpose_no_copy();
@@ -160,6 +186,7 @@ int main(void) {
     test_slice();
     test_broadcast();
     test_allclose();
+    test_float64();
     printf("\nAll tests passed.\n");
     return 0;
 }

@@ -7,6 +7,7 @@
 
 #define TMP_A "test_ser_tmp_a.bin"
 #define TMP_B "test_ser_tmp_b.bin"
+#define TMP_C "test_ser_tmp_c.bin"
 
 static void fill_f32(FeTensor *t, float base) {
     float *p = (float *)t->data;
@@ -43,28 +44,37 @@ static void test_roundtrip_int_dtypes(void) {
     int shape[] = {6};
     FeTensor *ti8  = fe_tensor_alloc(DTYPE_INT8,  1, shape);
     FeTensor *ti32 = fe_tensor_alloc(DTYPE_INT32, 1, shape);
+    FeTensor *tf64 = fe_tensor_alloc(DTYPE_FLOAT64, 1, shape);
     for (int i = 0; i < 6; i++) {
         ((int8_t *)ti8->data)[i]  = (int8_t)(i - 3);
         ((int32_t *)ti32->data)[i] = i * 1000;
+        ((double *)tf64->data)[i] = i * 0.25;
     }
 
     assert(fe_tensor_save(ti8,  TMP_A) == FE_OK);
     assert(fe_tensor_save(ti32, TMP_B) == FE_OK);
+    assert(fe_tensor_save(tf64, TMP_C) == FE_OK);
 
-    FeTensor *li8 = NULL, *li32 = NULL;
+    FeTensor *li8 = NULL, *li32 = NULL, *lf64 = NULL;
     assert(fe_tensor_load(TMP_A, &li8)  == FE_OK);
     assert(fe_tensor_load(TMP_B, &li32) == FE_OK);
+    assert(fe_tensor_load(TMP_C, &lf64) == FE_OK);
     assert(li8->dtype  == DTYPE_INT8);
     assert(li32->dtype == DTYPE_INT32);
+    assert(lf64->dtype == DTYPE_FLOAT64);
     assert_same_bytes(ti8, li8);
     assert_same_bytes(ti32, li32);
+    assert_same_bytes(tf64, lf64);
 
     fe_tensor_free(li8);
     fe_tensor_free(li32);
+    fe_tensor_free(lf64);
     fe_tensor_free(ti8);
     fe_tensor_free(ti32);
+    fe_tensor_free(tf64);
     remove(TMP_A);
     remove(TMP_B);
+    remove(TMP_C);
     printf("PASS test_roundtrip_int_dtypes\n");
 }
 

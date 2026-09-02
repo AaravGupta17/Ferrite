@@ -11,6 +11,7 @@ typedef enum {
     DTYPE_FLOAT32 = 0,
     DTYPE_INT8    = 1,
     DTYPE_INT32   = 2,
+    DTYPE_FLOAT64 = 3,
 } FeDtype;
 
 /*
@@ -35,6 +36,7 @@ typedef enum {
 static inline size_t fe_dtype_size(FeDtype dtype) {
     switch (dtype) {
         case DTYPE_FLOAT32: return 4;
+        case DTYPE_FLOAT64: return 8;
         case DTYPE_INT8:    return 1;
         case DTYPE_INT32:   return 4;
         default:            return 0;
