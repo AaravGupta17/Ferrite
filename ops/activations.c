@@ -91,3 +91,82 @@ FeStatus fe_bias_add(const FeTensor *in, const FeTensor *bias, FeTensor *out) {
     }
     return FE_OK;
 }
+
+/* Shared shape/dtype validation for elementwise activations. */
+static FeStatus validate_act(const FeTensor *in, const FeTensor *out) {
+    if (!in || !out) return FE_ERR_NULL;
+    if (in->dtype != DTYPE_FLOAT32 || out->dtype != DTYPE_FLOAT32)
+        return FE_ERR_DTYPE;
+    if (fe_tensor_numel(in) != fe_tensor_numel(out)) return FE_ERR_SHAPE;
+    return FE_OK;
+}
+
+FeStatus fe_sigmoid(const FeTensor *in, FeTensor *out) {
+    FeStatus s = validate_act(in, out);
+    if (s != FE_OK) return s;
+    int n = fe_tensor_numel(in);
+    const float *p = (const float *)in->data;
+    float *o = (float *)out->data;
+    for (int i = 0; i < n; i++) o[i] = 1.0f / (1.0f + expf(-p[i]));
+    return FE_OK;
+}
+
+FeStatus fe_tanh(const FeTensor *in, FeTensor *out) {
+    FeStatus s = validate_act(in, out);
+    if (s != FE_OK) return s;
+    int n = fe_tensor_numel(in);
+    const float *p = (const float *)in->data;
+    float *o = (float *)out->data;
+    for (int i = 0; i < n; i++) o[i] = tanhf(p[i]);
+    return FE_OK;
+}
+
+/* GELU via the tanh approximation (documented choice; no erf dependency). */
+#define GELU_COEF 0.7978845608028654f  /* sqrt(2/pi) */
+
+FeStatus fe_gelu(const FeTensor *in, FeTensor *out) {
+    FeStatus s = validate_act(in, out);
+    if (s != FE_OK) return s;
+    int n = fe_tensor_numel(in);
+    const float *p = (const float *)in->data;
+    float *o = (float *)out->data;
+    for (int i = 0; i < n; i++) {
+        float x = p[i];
+        o[i] = 0.5f * x * (1.0f + tanhf(GELU_COEF * (x + 0.044715f * x * x * x)));
+    }
+    return FE_OK;
+}
+
+FeStatus fe_leaky_relu(const FeTensor *in, FeTensor *out, float negative_slope) {
+    FeStatus s = validate_act(in, out);
+    if (s != FE_OK) return s;
+    int n = fe_tensor_numel(in);
+    const float *p = (const float *)in->data;
+    float *o = (float *)out->data;
+    for (int i = 0; i < n; i++)
+        o[i] = p[i] > 0.0f ? p[i] : negative_slope * p[i];
+    return FE_OK;
+}
+
+FeStatus fe_elu(const FeTensor *in, FeTensor *out, float alpha) {
+    FeStatus s = validate_act(in, out);
+    if (s != FE_OK) return s;
+    int n = fe_tensor_numel(in);
+    const float *p = (const float *)in->data;
+    float *o = (float *)out->data;
+    for (int i = 0; i < n; i++)
+        o[i] = p[i] > 0.0f ? p[i] : alpha * (expf(p[i]) - 1.0f);
+    return FE_OK;
+}
+
+/* Swish (SiLU): x * sigmoid(x). */
+FeStatus fe_swish(const FeTensor *in, FeTensor *out) {
+    FeStatus s = validate_act(in, out);
+    if (s != FE_OK) return s;
+    int n = fe_tensor_numel(in);
+    const float *p = (const float *)in->data;
+    float *o = (float *)out->data;
+    for (int i = 0; i < n; i++)
+        o[i] = p[i] / (1.0f + expf(-p[i]));
+    return FE_OK;
+}

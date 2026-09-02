@@ -97,6 +97,16 @@ add_library(ferrite_ops STATIC
     ops/matmul.c
     ops/activations.c
     ops/conv1d.c
+    ops/conv2d.c
+    ops/elementwise.c
+    ops/gemm.c
+    ops/math.c
+    ops/norm.c
+    ops/pool.c
+    ops/rand.c
+    ops/reduce.c
+    ops/sequence.c
+    ops/stability.c
 )
 target_link_libraries(ferrite_ops PUBLIC ferrite_core ferrite_simd)
 
@@ -123,6 +133,7 @@ enable_testing()
 add_executable(test_tensor      tests/test_tensor.c)
 add_executable(test_allocator   tests/test_allocator.c)
 add_executable(test_ops         tests/test_ops.c)
+add_executable(test_ops3        tests/test_ops3.c)
 add_executable(test_graph       tests/test_graph.c)
 add_executable(test_engine      tests/test_engine.c)
 add_executable(test_onnx        tests/test_onnx.c)
@@ -135,6 +146,7 @@ add_executable(test_tensor_ser  tests/test_tensor_ser.c)
 target_link_libraries(test_tensor      ferrite_core)
 target_link_libraries(test_allocator   ferrite_core)
 target_link_libraries(test_ops         ferrite_core ferrite_ops ferrite_simd)
+target_link_libraries(test_ops3        ferrite_core ferrite_ops ferrite_simd)
 target_link_libraries(test_graph       ferrite_core ferrite_graph)
 target_link_libraries(test_engine      ferrite_runtime)
 target_link_libraries(test_onnx        ferrite_core ferrite_graph ferrite_importer)
@@ -144,7 +156,7 @@ target_link_libraries(test_profiler    ferrite_core ferrite_graph ferrite_ops fe
 target_link_libraries(test_quant       ferrite_core ferrite_quant)
 target_link_libraries(test_tensor_ser  ferrite_core)
 
-foreach(t test_tensor test_allocator test_ops test_graph test_engine
+foreach(t test_tensor test_allocator test_ops test_ops3 test_graph test_engine
           test_onnx test_planner test_conv1d test_profiler test_quant
           test_tensor_ser)
     ferrite_exe(${t})

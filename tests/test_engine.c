@@ -114,8 +114,92 @@ static void test_two_layer_mlp(void) {
     printf("PASS test_two_layer_mlp\n");
 }
 
+/*
+ * Stage 3 end-to-end graph: exercise the new math/activation/gemm ops
+ * through the engine in one fused pipeline.
+ *
+ *   input [1,3] --EXP--> [1,3] --SIGMOID--> t1 --LN(beta=bias)--> t2
+ *              --GEMM(W=[3,2])--> [1,2] --SOFTMAX--> output [1,2]
+ *
+ * We set layernorm gamma=1/beta=0 so it is the identity, W is the identity
+ * projection, and softmax of identical logits yields 1/2 each.
+ */
+static void test_stage3_graph(void) {
+    FeGraph g;
+    fe_graph_init(&g);
+
+    int s_in[]  = {1, 3};
+    int s_12[]  = {1, 2};
+    int s_13[]  = {1, 3};
+    int s_w[]   = {3, 2};
+    int s_g[]   = {3};   /* layernorm gamma */
+    int s_b[]   = {3};   /* layernorm beta  */
+
+    int t_in  = fe_graph_add_tensor(&g, "input", DTYPE_FLOAT32, 2, s_in,  0);
+    int t_e   = fe_graph_add_tensor(&g, "exp",   DTYPE_FLOAT32, 2, s_13,  0);
+    int t_s   = fe_graph_add_tensor(&g, "sig",   DTYPE_FLOAT32, 2, s_13,  0);
+    int t_ln  = fe_graph_add_tensor(&g, "ln",    DTYPE_FLOAT32, 2, s_13,  0);
+    int t_w   = fe_graph_add_tensor(&g, "w",     DTYPE_FLOAT32, 2, s_w,   1);
+    int t_lg  = fe_graph_add_tensor(&g, "lg",    DTYPE_FLOAT32, 1, s_g,   1);
+    int t_lb  = fe_graph_add_tensor(&g, "lb",    DTYPE_FLOAT32, 1, s_b,   1);
+    int t_geo = fe_graph_add_tensor(&g, "geo",   DTYPE_FLOAT32, 2, s_12,  0);
+    int t_out = fe_graph_add_tensor(&g, "output",DTYPE_FLOAT32, 2, s_12,  0);
+
+    int e_in[] = {t_in};  int e_out[] = {t_e};
+    int s_in2[] = {t_e};  int s_out2[] = {t_s};
+    int ln_in[] = {t_s, t_lg, t_lb};  int ln_out[] = {t_ln};
+    int g_in[] = {t_ln, t_w};  int g_out[] = {t_geo};
+    int sm_in[] = {t_geo}; int sm_out[] = {t_out};
+
+    fe_graph_add_node(&g, "input", FE_OP_INPUT,    NULL,    0, &t_in, 1);
+    fe_graph_add_node(&g, "exp",   FE_OP_EXP,      e_in,    1, e_out, 1);
+    fe_graph_add_node(&g, "sig",   FE_OP_SIGMOID,  s_in2,   1, s_out2, 1);
+    int n_ln = fe_graph_add_node(&g, "ln",    FE_OP_LAYERNORM, ln_in,  3, ln_out, 1);
+    g.nodes[n_ln].attrs.layernorm.eps = 1e-5f;
+    int n_geo = fe_graph_add_node(&g, "gemm",  FE_OP_GEMM,     g_in,    2, g_out, 1);
+    g.nodes[n_geo].attrs.gemm.alpha = 1.0f;
+    g.nodes[n_geo].attrs.gemm.beta  = 0.0f;
+    g.nodes[n_geo].attrs.gemm.transA = 0;
+    g.nodes[n_geo].attrs.gemm.transB = 0;
+    fe_graph_add_node(&g, "soft",  FE_OP_SOFTMAX,  sm_in,   1, sm_out, 1);
+    fe_graph_add_node(&g, "soft",  FE_OP_SOFTMAX,  sm_in,   1, sm_out, 1);
+    fe_graph_add_node(&g, "output",FE_OP_OUTPUT,   &t_out,  1, NULL,   0);
+
+    FeRuntime rt;
+    assert(fe_runtime_init(&rt, &g,
+                           weight_buf, WEIGHT_BUF_SIZE,
+                           act_buf,    ACT_BUF_SIZE) == FE_OK);
+    assert(fe_runtime_alloc_weights(&rt) == FE_OK);
+
+    float *w   = (float *)g.tensors[t_w].tensor->data;
+    float *lg  = (float *)g.tensors[t_lg].tensor->data;
+    float *lb  = (float *)g.tensors[t_lb].tensor->data;
+    for (int i = 0; i < 3; i++) lg[i] = 1.0f;
+    for (int i = 0; i < 3; i++) lb[i] = 0.0f;
+    /* W: [1, 0; 1, 0; 1, 0] -> both outputs get the same logit = sum of the 3 */
+    for (int r = 0; r < 3; r++) { w[r * 2 + 0] = 1.0f; w[r * 2 + 1] = 1.0f; }
+
+    FeTensor *input = fe_tensor_alloc(DTYPE_FLOAT32, 2, s_in);
+    float in_data[] = {1.0f, 2.0f, 3.0f};
+    memcpy(input->data, in_data, sizeof(in_data));
+    FeTensor *output = fe_tensor_alloc(DTYPE_FLOAT32, 2, s_12);
+
+    assert(fe_runtime_run(&rt, input, output) == FE_OK);
+
+    float *out = (float *)output->data;
+    float sum = out[0] + out[1];
+    assert(fabsf(out[0] - out[1]) < EPSILON);
+    assert(fabsf(sum - 1.0f) < EPSILON);
+
+    fe_runtime_print_trace(&rt);
+    fe_tensor_free(input);
+    fe_tensor_free(output);
+    printf("PASS test_stage3_graph\n");
+}
+
 int main(void) {
     test_two_layer_mlp();
+    test_stage3_graph();
     printf("\nAll tests passed.\n");
     return 0;
 }

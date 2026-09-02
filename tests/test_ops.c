@@ -230,6 +230,66 @@ static void test_stability(void) {
     printf("PASS test_stability\n");
 }
 
+static void test_rand_uniform(void) {
+    int shape[] = {256};
+    FeTensor *a = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+    FeTensor *b = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+
+    /* Same seed reproduces byte-identical output across runs. */
+    assert(fe_rand_uniform(a, 0.0f, 1.0f, 42u) == FE_OK);
+    assert(fe_rand_uniform(b, 0.0f, 1.0f, 42u) == FE_OK);
+    for (int i = 0; i < 256; i++)
+        assert(((float *)a->data)[i] == ((float *)b->data)[i]);
+
+    /* Different seed diverges. */
+    assert(fe_rand_uniform(b, 0.0f, 1.0f, 43u) == FE_OK);
+    int same = 1;
+    for (int i = 0; i < 256; i++)
+        if (((float *)a->data)[i] != ((float *)b->data)[i]) { same = 0; break; }
+    assert(!same);
+
+    /* Values stay within [low, high). */
+    assert(fe_rand_uniform(a, -5.0f, 5.0f, 7u) == FE_OK);
+    for (int i = 0; i < 256; i++) {
+        float v = ((float *)a->data)[i];
+        assert(v >= -5.0f && v < 5.0f);
+    }
+
+    /* Bad args rejected. */
+    assert(fe_rand_uniform(a, 1.0f, 1.0f, 0u) == FE_ERR_SHAPE);
+
+    fe_tensor_free(a); fe_tensor_free(b);
+    printf("PASS test_rand_uniform\n");
+}
+
+static void test_rand_normal(void) {
+    int shape[] = {512};
+    FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
+
+    assert(fe_rand_normal(t, 100.0f, 2.0f, 99u) == FE_OK);
+
+    /* Deterministic: same seed, same stream. */
+    float first = ((float *)t->data)[0];
+    assert(fe_rand_normal(t, 100.0f, 2.0f, 99u) == FE_OK);
+    assert(((float *)t->data)[0] == first);
+
+    /* Measure mean/std over the sample — should be ~close to params. */
+    double mean = 0.0;
+    for (int i = 0; i < 512; i++) mean += ((float *)t->data)[i];
+    mean /= 512.0;
+    double var = 0.0;
+    for (int i = 0; i < 512; i++) {
+        double d = ((float *)t->data)[i] - mean;
+        var += d * d;
+    }
+    var /= 512.0;
+    assert(fabs(mean - 100.0) < 1.0);
+    assert(fabs(var - 4.0) < 1.0);
+
+    fe_tensor_free(t);
+    printf("PASS test_rand_normal\n");
+}
+
 int main(void) {
     test_matmul_identity();
     test_matmul_known();
@@ -241,6 +301,8 @@ int main(void) {
     test_reduce();
     test_dot();
     test_stability();
+    test_rand_uniform();
+    test_rand_normal();
     printf("\nAll tests passed.\n");
     return 0;
 }

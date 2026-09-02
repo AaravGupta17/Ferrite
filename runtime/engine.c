@@ -52,6 +52,58 @@ static FeStatus dispatch_node(FeRuntime *rt, const FeNode *node) {
             fe_tensor_free(view);
             break;
         }
+        /* ---- Basic math ---- */
+        case FE_OP_SUB: s = fe_sub(IN(0), IN(1), OUT(0)); break;
+        case FE_OP_MUL: s = fe_mul(IN(0), IN(1), OUT(0)); break;
+        case FE_OP_DIV: s = fe_div(IN(0), IN(1), OUT(0)); break;
+        case FE_OP_NEG: s = fe_neg(IN(0), OUT(0)); break;
+        case FE_OP_EXP: s = fe_exp(IN(0), OUT(0)); break;
+        case FE_OP_LOG: s = fe_ln(IN(0), OUT(0)); break;
+        case FE_OP_POW: s = fe_pow(IN(0), IN(1), OUT(0)); break;
+        /* ---- Activations ---- */
+        case FE_OP_SIGMOID:    s = fe_sigmoid(IN(0), OUT(0)); break;
+        case FE_OP_TANH:       s = fe_tanh(IN(0), OUT(0)); break;
+        case FE_OP_GELU:       s = fe_gelu(IN(0), OUT(0)); break;
+        case FE_OP_LEAKY_RELU: s = fe_leaky_relu(IN(0), OUT(0),
+                                   node->attrs.leaky_relu.negative_slope); break;
+        case FE_OP_ELU:        s = fe_elu(IN(0), OUT(0), node->attrs.elu.alpha); break;
+        case FE_OP_SWISH:      s = fe_swish(IN(0), OUT(0)); break;
+        /* ---- Linear algebra ---- */
+        case FE_OP_GEMM: s = fe_gemm(IN(0), node->attrs.gemm.transA,
+                                     IN(1), node->attrs.gemm.transB,
+                                     OUT(0), node->attrs.gemm.alpha,
+                                     node->attrs.gemm.beta); break;
+        case FE_OP_TRANSPOSE: s = fe_transpose(IN(0), OUT(0)); break;
+        /* ---- CNN ---- */
+        case FE_OP_CONV2D:
+            s = fe_conv2d(IN(0), IN(1),
+                          node->n_inputs > 2 ? IN(2) : NULL, OUT(0),
+                          node->attrs.conv2d.stride_h, node->attrs.conv2d.stride_w,
+                          node->attrs.conv2d.pad_h,    node->attrs.conv2d.pad_w);
+            break;
+        case FE_OP_MAXPOOL:
+            s = fe_maxpool(IN(0), OUT(0), node->attrs.pool.kh, node->attrs.pool.kw,
+                           node->attrs.pool.sh, node->attrs.pool.sw); break;
+        case FE_OP_AVGPOOL:
+            s = fe_avgpool(IN(0), OUT(0), node->attrs.pool.kh, node->attrs.pool.kw,
+                           node->attrs.pool.sh, node->attrs.pool.sw); break;
+        case FE_OP_BATCHNORM:
+            s = fe_batchnorm(IN(0), IN(1), IN(2), IN(3), IN(4), OUT(0),
+                             node->attrs.batchnorm.eps); break;
+        case FE_OP_LAYERNORM:
+            s = fe_layernorm(IN(0), IN(1), IN(2), OUT(0),
+                             node->attrs.layernorm.eps); break;
+        case FE_OP_GROUPNORM:
+            s = fe_groupnorm(IN(0), IN(1), IN(2), OUT(0),
+                             node->attrs.groupnorm.groups, node->attrs.groupnorm.eps); break;
+        /* ---- Sequence ---- */
+        case FE_OP_ATTENTION:     s = fe_attention(IN(0), IN(1), IN(2), OUT(0)); break;
+        case FE_OP_MULTIHEAD_ATTN:
+            s = fe_multihead_attention(IN(0), IN(1), IN(2), IN(3), IN(4), OUT(0),
+                                       node->attrs.multihead.num_heads); break;
+        case FE_OP_EMBEDDING:     s = fe_embedding(IN(0), IN(1), OUT(0)); break;
+        case FE_OP_POSITIONAL_ENCOD:
+            s = fe_positional_encoding(IN(0), OUT(0)); break;
         default:
             fprintf(stderr, "Engine: unimplemented op %d\n", node->op);
             s = FE_ERR_SHAPE;

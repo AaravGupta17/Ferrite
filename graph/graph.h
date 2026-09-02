@@ -27,6 +27,40 @@ typedef enum {
     FE_OP_BATCHNORM  = 7,
     FE_OP_ADD        = 8,
     FE_OP_FLATTEN    = 9,
+
+    /* Stage 3 — basic math */
+    FE_OP_SUB        = 10,
+    FE_OP_MUL        = 11,
+    FE_OP_DIV        = 12,
+    FE_OP_NEG        = 13,
+    FE_OP_EXP        = 14,
+    FE_OP_LOG        = 15,
+    FE_OP_POW        = 16,
+
+    /* Stage 3 — activations */
+    FE_OP_SIGMOID    = 17,
+    FE_OP_TANH       = 18,
+    FE_OP_GELU       = 19,
+    FE_OP_LEAKY_RELU = 20,
+    FE_OP_ELU        = 21,
+    FE_OP_SWISH      = 22,
+
+    /* Stage 3 — linear algebra */
+    FE_OP_GEMM       = 23,
+    FE_OP_TRANSPOSE  = 24,
+
+    /* Stage 3 — CNN */
+    FE_OP_CONV2D     = 25,
+    FE_OP_MAXPOOL    = 26,
+    FE_OP_AVGPOOL    = 27,
+    FE_OP_LAYERNORM  = 28,
+    FE_OP_GROUPNORM  = 29,
+
+    /* Stage 3 — sequence */
+    FE_OP_ATTENTION         = 30,
+    FE_OP_MULTIHEAD_ATTN    = 31,
+    FE_OP_EMBEDDING         = 32,
+    FE_OP_POSITIONAL_ENCOD  = 33,
 } FeOpType;
 
 /*
@@ -57,8 +91,17 @@ typedef struct {
 
     /* Op-specific attributes */
     union {
-        struct { int axis; }            softmax;
-        struct { int stride; int pad; } conv1d;
+        struct { int axis; }                 softmax;
+        struct { int stride; int pad; }      conv1d;
+        struct { float negative_slope; }     leaky_relu;
+        struct { float alpha; }              elu;
+        struct { int stride_h, stride_w, pad_h, pad_w; } conv2d;
+        struct { int kh, kw, sh, sw; }       pool;
+        struct { float eps; }                layernorm;
+        struct { int groups; float eps; }    groupnorm;
+        struct { float eps; }                batchnorm;
+        struct { int transA, transB; float alpha, beta; } gemm;
+        struct { int num_heads; }            multihead;
     } attrs;
 } FeNode;
 
