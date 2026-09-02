@@ -171,7 +171,7 @@ typedef struct {
 } FeGraph;
 ```
 
-- **Ops** (`FeOpType`): `INPUT`, `OUTPUT`, `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `CONV1D`, `BATCHNORM`, `ADD`, `FLATTEN`. The `attrs` union carries op-specific attributes (softmax axis, conv1d stride/pad).
+- **Ops** (`FeOpType`): `INPUT`, `OUTPUT`, `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `CONV1D`, `BATCHNORM`, `ADD`, `FLATTEN` plus the Stage 3 families — Exp, Log, Pow, Sub/Mul/Div/Neg, Sigmoid/Tanh/GELU/LeakyReLU/ELU/Swish, GEMM, Transpose, Conv2D, MaxPool, AvgPool, LayerNorm/GroupNorm, Attention/Multi-Head Attention/Embedding/Positional Encoding. The `attrs` union carries op-specific attributes (softmax axis, conv stride/pad, norm eps, gemm trans/alpha/beta).
 - **Nodes** reference tensors by **index** into the registry, not by pointer.
 - **Tensor entries** (`FeTensorEntry`) hold name, shape, dtype, an `is_weight` flag, and a `FeTensor *tensor` that stays `NULL` until memory is assigned.
 - **Capacity limits**: 512 nodes, 1024 tensors, 8 inputs / 4 outputs per node, 64-char names. Fixed capacity — typical of embedded runtimes.
@@ -313,7 +313,7 @@ typedef struct {
 
 **Current state.** The engine uses the arena bump allocator directly for activations. It does **not** consume the planner's `FePlan`. The planner exists as a standalone, tested subsystem. Wiring `fe_plan_apply` into the runtime is an obvious integration task.
 
-**Dispatched ops:** `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `ADD` (as bias-add), `FLATTEN` (reshape view + copy). `CONV1D` and `BATCHNORM` are in the enum but **not dispatched** — they hit `FE_ERR_SHAPE` ("unimplemented op").
+**Dispatched ops:** every `FeOpType` in the enum now has a `switch` case in `dispatch_node`. Core ops: `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `ADD`, `FLATTEN`, `CONV1D`, `BATCHNORM`. Stage 3: basic math (`SUB`/`MUL`/`DIV`/`NEG`/`EXP`/`LOG`/`POW`), activations (`SIGMOID`/`TANH`/`GELU`/`LEAKY_RELU`/`ELU`/`SWISH`), linear algebra (`GEMM`, `TRANSPOSE`), CNN (`CONV2D`, `MAXPOOL`, `AVGPOOL`, `LAYERNORM`, `GROUPNORM`), and sequence (`ATTENTION`, `MULTIHEAD_ATTN`, `EMBEDDING`, `POSITIONAL_ENCOD`). No op is silently skipped.
 
 ---
 
@@ -449,7 +449,6 @@ Tracing one full inference through every layer:
 ## Known Limitations
 
 - **Planner not integrated.** `fe_runtime_run` uses the arena directly. `fe_plan_apply` exists but nothing calls it. Wiring it in would give deterministic, minimal activation memory.
-- **`CONV1D` and `BATCHNORM` not dispatched.** Both the enum and the conv1d kernel exist; `engine.c` lacks the cases. An engine integration gap.
 - **Limited opset.** Unsupported ONNX ops are silently skipped. Only models made of supported ops load correctly.
 - **No shape inference.** Shapes must exist in the ONNX file or be filled in by the caller. The importer skips value-info shape data.
 - **Quantization is per-tensor, not per-channel.** Per-channel scales would improve INT8 accuracy.

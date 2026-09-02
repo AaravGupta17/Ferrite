@@ -1,4 +1,4 @@
-# Stage 0 — Foundation (Current)
+# Stage 0 — Foundation (Complete)
 
 ## Bottom Line Up Front
 

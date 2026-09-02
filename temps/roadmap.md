@@ -6,7 +6,7 @@
 
 **Timeline.** Six weeks, part-time.
 
-**First moves.** Close two integration gaps — wire the memory planner into the runtime, and dispatch CONV1D and BATCHNORM. Then ship a runnable demo.
+**First moves.** Wire the memory planner into the runtime and route the engine's matmul/linear through the AVX2 kernel. Then ship a runnable demo. (Stages 0-3 — tensor, math backend, and the full operator library — are complete; the ops dispatch gap is closed.)
 
 **Guiding rule.** A correct 10-op runtime with a working demo beats a 40-op runtime where half the ops silently fail. Depth over breadth.
 
@@ -22,11 +22,12 @@ Ferrite is a zero-dependency C11 neural-network inference runtime built from fir
 | Arena allocator | `core/allocator.c/h` | Done | — |
 | Graph IR + topo sort | `graph/graph.c/h` | Done | — |
 | Ops: matmul, linear, relu, softmax, bias_add | `ops/matmul.c`, `ops/activations.c` | Done | — |
-| Conv1d (im2col + matmul) | `ops/conv1d.c` | Kernel only | **Not dispatched in the engine** |
-| Batchnorm | — | Missing | No kernel exists |
+| Conv1d (im2col + matmul) | `ops/conv1d.c` | Done | — |
+| Batchnorm | `ops/norm.c` | Done | — |
+| Stage 3 op library (Exp/Log/Pow, activations, GEMM/Transpose, Conv2D/Pool, LayerNorm/GroupNorm, Attention/MHA/Embedding/PosEnc) | `ops/math.c`, `ops/gemm.c`, `ops/pool.c`, `ops/conv2d.c`, `ops/sequence.c`, `ops/norm.c`, `ops/rand.c` | Done | — |
 | SIMD AVX2 matmul | `simd/matmul_avx2.c/h` | Done (~13.4×) | Not wired into engine dispatch |
 | Memory planner | `planner/memory_planner.c/h` | Standalone | **`fe_plan_apply` never called** |
-| Execution engine | `runtime/engine.c/h` | Partial | Dispatches 6 ops; CONV1D/BATCHNORM hit `FE_ERR_SHAPE` |
+| Execution engine | `runtime/engine.c/h` | Partial | Dispatches every op in the enum; planner + AVX2 not wired in |
 | ONNX importer | `importer/onnx.c/h` | Partial | Skips shape inference; limited op map; silently drops unsupported ops |
 | INT8 quantization | `quantization/quant.c/h` | Per-tensor | No per-channel scales; not integrated into a real model run |
 | Profiler + benchmarks | `tools/profiler.c/h`, `tools/bench_*.c` | Done | Benchmarks cover bare matmul only |
@@ -34,8 +35,7 @@ Ferrite is a zero-dependency C11 neural-network inference runtime built from fir
 
 **Confirmed gaps, by location:**
 
-- `runtime/engine.c:17` — dispatch handles `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `ADD`, `FLATTEN`. `CONV1D` and `BATCHNORM` fall through to `FE_ERR_SHAPE`.
-- `ops/` has no `batchnorm.c`. The op enum (`graph/graph.h:7`) exists; the kernel does not.
+- `runtime/engine.c` — every `FeOpType` has a dispatch case (Stage 3 adds math, activation, GEMM/transpose, conv2d/pool, norm, and sequence ops). Errors propagate, nothing is silently skipped. Remaining gap: the engine still calls the naive `fe_matmul`, not the AVX2 kernel.
 - `fe_plan_apply` (`planner/memory_planner.h`) is never called from `fe_runtime_run`. Activations come from arena bump-alloc instead.
 - The engine always uses the naive `fe_matmul`. Only `bench_avx2` exercises the AVX2 kernel.
 - The importer skips ONNX `value_info` (shape data). Shapes must be known ahead of time.
@@ -54,7 +54,7 @@ The proof is a demo, not a unit test. Today the strongest evidence is `test_engi
 **Acceptance criteria.**
 
 1. **Correctness.** A real `.onnx` model loads with shapes inferred from the file. Float32 output matches ONNX Runtime (or PyTorch) reference output within tolerance on a batch of inputs. Test-set accuracy on MNIST is reported and close to the training number.
-2. **Integration gaps closed.** `fe_plan_apply` drives activation memory in `fe_runtime_run`. `CONV1D` and `BATCHNORM` are dispatched, with graph-level tests through the engine — not bare kernels.
+2. **Integration gaps closed.** `fe_plan_apply` drives activation memory in `fe_runtime_run`, and the AVX2 matmul is wired into the engine so it actually powers matmul/linear. Both are covered by graph-level tests through the engine.
 3. **Performance.** The AVX2 matmul (runtime-detected) powers matmul and linear. The README carries a benchmark table — naive vs AVX2 vs INT8 — with a speedup story, not one 256×256 number.
 4. **One deep feature.** Pick per-channel INT8 quantization, threaded matmul tiles, or dynamic capacities. Do it properly and measure it.
 5. **No new dependencies.** Everything stays hand-implemented. That is the point.
