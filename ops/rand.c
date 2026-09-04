@@ -8,6 +8,9 @@
  * We use a splitmix32-style generator (no external RNG state, fully
  * determined by the seed), so results are reproducible and portable.
  */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 static uint32_t next_u32(uint32_t *state) {
     uint32_t z = (*state += 0x9E3779B9u);
