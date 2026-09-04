@@ -100,9 +100,51 @@ static void test_topo_diamond(void) {
     printf("PASS test_topo_diamond\n");
 }
 
+static void test_validate_passes_on_valid_graph(void) {
+    FeGraph g;
+    fe_graph_init(&g);
+    int s[] = {1, 4};
+    int t0 = fe_graph_add_tensor(&g, "t0", DTYPE_FLOAT32, 2, s, 0);
+    int t1 = fe_graph_add_tensor(&g, "t1", DTYPE_FLOAT32, 2, s, 0);
+    int in0[] = {t0}; int out0[] = {t1};
+    fe_graph_add_node(&g, "n0", FE_OP_RELU, in0, 1, out0, 1);
+    assert(fe_graph_validate(&g) == FE_OK);
+    printf("PASS test_validate_passes_on_valid_graph\n");
+}
+
+static void test_validate_catches_out_of_range_index(void) {
+    FeGraph g;
+    fe_graph_init(&g);
+    int s[] = {1, 4};
+    int t0 = fe_graph_add_tensor(&g, "t0", DTYPE_FLOAT32, 2, s, 0);
+    int bad_out[] = {t0 + 99}; /* doesn't exist */
+    int in0[] = {t0};
+    fe_graph_add_node(&g, "n0", FE_OP_RELU, in0, 1, bad_out, 1);
+    assert(fe_graph_validate(&g) == FE_ERR_BOUNDS);
+    printf("PASS test_validate_catches_out_of_range_index\n");
+}
+
+static void test_validate_catches_double_producer(void) {
+    FeGraph g;
+    fe_graph_init(&g);
+    int s[] = {1, 4};
+    int t0 = fe_graph_add_tensor(&g, "t0", DTYPE_FLOAT32, 2, s, 0);
+    int t1 = fe_graph_add_tensor(&g, "t1", DTYPE_FLOAT32, 2, s, 0);
+    int t2 = fe_graph_add_tensor(&g, "t2", DTYPE_FLOAT32, 2, s, 0);
+    int in0[] = {t0}; int out0[] = {t2};
+    int in1[] = {t1}; int out1[] = {t2}; /* same output as n0 — conflict */
+    fe_graph_add_node(&g, "n0", FE_OP_RELU, in0, 1, out0, 1);
+    fe_graph_add_node(&g, "n1", FE_OP_RELU, in1, 1, out1, 1);
+    assert(fe_graph_validate(&g) == FE_ERR_SHAPE);
+    printf("PASS test_validate_catches_double_producer\n");
+}
+
 int main(void) {
     test_build_and_sort();
     test_topo_diamond();
+    test_validate_passes_on_valid_graph();
+    test_validate_catches_out_of_range_index();
+    test_validate_catches_double_producer();
     printf("\nAll tests passed.\n");
     return 0;
 }

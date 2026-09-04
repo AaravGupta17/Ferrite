@@ -135,6 +135,71 @@ static const char *op_name(FeOpType op) {
     }
 }
 
+FeStatus fe_graph_validate(const FeGraph *g) {
+    if (!g) return FE_ERR_NULL;
+
+    /* --- Tensor registry: every entry must be well-formed --- */
+    for (int t = 0; t < g->n_tensors; t++) {
+        const FeTensorEntry *e = &g->tensors[t];
+
+        if (e->dtype != DTYPE_FLOAT32 && e->dtype != DTYPE_INT8 &&
+            e->dtype != DTYPE_INT32   && e->dtype != DTYPE_FLOAT64) {
+            fprintf(stderr, "fe_graph_validate: tensor %d (%s) has unrecognized dtype %d\n",
+                    t, e->name, e->dtype);
+            return FE_ERR_DTYPE;
+        }
+        if (e->ndim < 0 || e->ndim > FERRITE_MAX_DIMS) {
+            fprintf(stderr, "fe_graph_validate: tensor %d (%s) has invalid ndim %d\n",
+                    t, e->name, e->ndim);
+            return FE_ERR_SHAPE;
+        }
+        for (int d = 0; d < e->ndim; d++) {
+            if (e->shape[d] < 0) {
+                fprintf(stderr, "fe_graph_validate: tensor %d (%s) has negative extent shape[%d]=%d\n",
+                        t, e->name, d, e->shape[d]);
+                return FE_ERR_SHAPE;
+            }
+        }
+    }
+
+    /* --- Node edges: every input/output index must resolve into the registry --- */
+    for (int i = 0; i < g->n_nodes; i++) {
+        const FeNode *n = &g->nodes[i];
+        for (int k = 0; k < n->n_inputs; k++) {
+            if (n->inputs[k] < 0 || n->inputs[k] >= g->n_tensors) {
+                fprintf(stderr, "fe_graph_validate: node %d (%s) input %d is out of range (%d)\n",
+                        i, n->name, k, n->inputs[k]);
+                return FE_ERR_BOUNDS;
+            }
+        }
+        for (int k = 0; k < n->n_outputs; k++) {
+            if (n->outputs[k] < 0 || n->outputs[k] >= g->n_tensors) {
+                fprintf(stderr, "fe_graph_validate: node %d (%s) output %d is out of range (%d)\n",
+                        i, n->name, k, n->outputs[k]);
+                return FE_ERR_BOUNDS;
+            }
+        }
+    }
+
+    /* --- Producer uniqueness: a tensor may be written by at most one node --- */
+    int producer_count[FE_MAX_TENSORS] = {0};
+    for (int i = 0; i < g->n_nodes; i++) {
+        const FeNode *n = &g->nodes[i];
+        for (int k = 0; k < n->n_outputs; k++) {
+            producer_count[n->outputs[k]]++;
+        }
+    }
+    for (int t = 0; t < g->n_tensors; t++) {
+        if (producer_count[t] > 1) {
+            fprintf(stderr, "fe_graph_validate: tensor %d (%s) has %d producers (must be at most 1)\n",
+                    t, g->tensors[t].name, producer_count[t]);
+            return FE_ERR_SHAPE;
+        }
+    }
+
+    return FE_OK;
+}
+
 void fe_graph_print(const FeGraph *g) {
     printf("FeGraph: %d nodes, %d tensors\n", g->n_nodes, g->n_tensors);
     printf("Execution order:\n");

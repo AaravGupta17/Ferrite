@@ -153,5 +153,24 @@ FeStatus fe_graph_topo_sort(FeGraph *g);
 
 /* Print graph structure for debugging. */
 void     fe_graph_print(const FeGraph *g);
+/*
+ * Validate graph structural and tensor-registry invariants. Run after
+ * building the graph and after any mutation, before topo sort / execution.
+ *
+ * Checks:
+ *   - every FeTensorEntry has a recognized FeDtype and an ndim/shape
+ *     within FERRITE_MAX_DIMS with no negative extents (registry metadata
+ *     must be well-formed before any node references it)
+ *   - every node's input/output indices reference a tensor that actually
+ *     exists in the registry (in-bounds)
+ *   - every tensor is written by at most one node (a producer conflict is
+ *     a build-time bug, not a runtime one)
+ *
+ * Returns FE_OK, or the first violation found:
+ *   FE_ERR_DTYPE  — a tensor entry has an unrecognized dtype
+ *   FE_ERR_SHAPE  — invalid ndim/shape, or a tensor has >1 producer
+ *   FE_ERR_BOUNDS — a node references a tensor index outside the registry
+ */
+FeStatus fe_graph_validate(const FeGraph *g);
 
 #endif // FERRITE_GRAPH_H
