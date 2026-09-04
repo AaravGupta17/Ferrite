@@ -86,12 +86,13 @@ Layer dependencies point downward only: `importer/` → `graph/` → `planner/` 
 
 ## Current State and Known Gaps
 
-- **Engine dispatches only:** `INPUT`, `OUTPUT`, `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `ADD`, `FLATTEN` (`runtime/engine.c:18-50`). `CONV1D` and `BATCHNORM` hit `FE_ERR_SHAPE` ("unimplemented op").
-- **Planner is standalone.** `fe_plan_apply` exists (`planner/memory_planner.h:67`) but nothing calls it; the runtime uses the arena bump allocator directly.
-- **AVX2 not in dispatch.** The engine always uses naive `fe_matmul`; only `bench_avx2` exercises `fe_matmul_avx2`.
-- **Importer skips shape inference.** ONNX `value_info` is ignored; shapes must be known ahead of time.
-- **Unsupported ONNX ops are silently skipped.** Only models built from supported ops load correctly.
-- **Quantization is per-tensor, not per-channel.**
+- **Engine dispatches every `FeOpType`** — basic math, activations, GEMM/transpose, conv2d/pool, norms (including `CONV1D`/`BATCHNORM`), sequence ops (`runtime/engine.c`, `dispatch_node`). Nothing is silently skipped; an unrecognized op returns `FE_ERR_SHAPE` loudly.
+- **AVX2 is wired into dispatch.** `fe_matmul` (`ops/matmul.c`) already routes to `fe_matmul_avx2` behind `fe_cpu_has_avx2()`, with scalar fallback — this is what the engine calls for every `MATMUL`/`LINEAR` node. `tests/test_simd.c` is the regression check (naive vs. AVX2, vectorized and remainder paths); `bench_avx2` is timing only now, not the sole correctness check.
+- **Planner is still standalone.** `fe_plan_apply` exists (`planner/memory_planner.h:67`) but nothing calls it; `fe_runtime_run` allocates activations directly off the arena (`alloc_activations` in `runtime/engine.c`), not through the plan. This is the current real integration gap.
+- **`fe_graph_validate` exists (`graph/graph.h`) but isn't called yet.** Registry integrity, edge-index bounds, and producer-uniqueness checks are implemented and tested (`tests/test_graph.c`); wiring the call into `fe_runtime_init` (right after `fe_graph_topo_sort`) is still open.
+- **Shape inference is a narrow runtime workaround, not a general one.** `runtime/engine.c`'s `infer_shapes()` propagates shapes through the topo order with hardcoded per-op rules for `CONV1D`, `RELU`/`SOFTMAX`/`BATCHNORM`, `ADD`, `FLATTEN`, `MATMUL` — enough for the acousticleaknet demo (`tools/demo_acousticleaknet.c`), but ONNX `value_info` is still ignored, so shapes for other ops (`CONV2D`, `GEMM`, pooling, etc.) aren't inferred generally.
+- **Unsupported ONNX ops are silently skipped** by the importer. Only models built from supported ops load correctly.
+- **Quantization has both per-tensor and per-channel INT8 now** (`quantization/quant.c` — `fe_quantize`/`fe_matmul_int8` per-tensor, `fe_quantize_per_channel`/`fe_matmul_int8_per_channel` per-channel). No calibration pipeline yet — scales come from a single tensor's `max(|x|)`, not from running a calibration set through the float model.
 - **AVX2 vectorized path needs `N % 8 == 0`**; remainders fall back to scalar.
 - **Fixed capacities:** 512 nodes, 1024 tensors, 8 dims.
 - **Single-threaded** execution.

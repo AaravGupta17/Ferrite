@@ -6,7 +6,7 @@
 
 **Timeline.** Six weeks, part-time.
 
-**First moves.** Wire the memory planner into the runtime and route the engine's matmul/linear through the AVX2 kernel. Then ship a runnable demo. (Stages 0-3 — tensor, math backend, and the full operator library — are complete; the ops dispatch gap is closed.)
+"First moves. Wire the memory planner into the runtime. (The AVX2 routing described in earlier drafts of this doc is already done — fe_matmul dispatches to fe_matmul_avx2 via CPUID detection — so the planner is the sole remaining first move.)"
 
 **Guiding rule.** A correct 10-op runtime with a working demo beats a 40-op runtime where half the ops silently fail. Depth over breadth.
 
@@ -16,22 +16,22 @@
 
 Ferrite is a zero-dependency C11 neural-network inference runtime built from first principles. Each subsystem has a test binary built under `-fsanitize=address,undefined`. The table shows where each piece stands.
 
-| Subsystem | Files | Status | Gap |
-|---|---|---|---|
-| Tensor (strided views) | `core/tensor.c/h` | Done | — |
-| Arena allocator | `core/allocator.c/h` | Done | — |
-| Graph IR + topo sort | `graph/graph.c/h` | Done | — |
-| Ops: matmul, linear, relu, softmax, bias_add | `ops/matmul.c`, `ops/activations.c` | Done | — |
-| Conv1d (im2col + matmul) | `ops/conv1d.c` | Done | — |
-| Batchnorm | `ops/norm.c` | Done | — |
-| Stage 3 op library (Exp/Log/Pow, activations, GEMM/Transpose, Conv2D/Pool, LayerNorm/GroupNorm, Attention/MHA/Embedding/PosEnc) | `ops/math.c`, `ops/gemm.c`, `ops/pool.c`, `ops/conv2d.c`, `ops/sequence.c`, `ops/norm.c`, `ops/rand.c` | Done | — |
-| SIMD AVX2 matmul | `simd/matmul_avx2.c/h` | Done (~13.4×) | Not wired into engine dispatch |
-| Memory planner | `planner/memory_planner.c/h` | Standalone | **`fe_plan_apply` never called** |
-| Execution engine | `runtime/engine.c/h` | Partial | Dispatches every op in the enum; planner + AVX2 not wired in |
+| Subsystem | Files | Status | Gap                                                                   |
+|---|---|---|-----------------------------------------------------------------------|
+| Tensor (strided views) | `core/tensor.c/h` | Done | —                                                                     |
+| Arena allocator | `core/allocator.c/h` | Done | —                                                                     |
+| Graph IR + topo sort | `graph/graph.c/h` | Done | —                                                                     |
+| Ops: matmul, linear, relu, softmax, bias_add | `ops/matmul.c`, `ops/activations.c` | Done | —                                                                     |
+| Conv1d (im2col + matmul) | `ops/conv1d.c` | Done | —                                                                     |
+| Batchnorm | `ops/norm.c` | Done | —                                                                     |
+| Stage 3 op library (Exp/Log/Pow, activations, GEMM/Transpose, Conv2D/Pool, LayerNorm/GroupNorm, Attention/MHA/Embedding/PosEnc) | `ops/math.c`, `ops/gemm.c`, `ops/pool.c`, `ops/conv2d.c`, `ops/sequence.c`, `ops/norm.c`, `ops/rand.c` | Done | —                                                                     |
+| SIMD AVX2 matmul | `simd/matmul_avx2.c/h` | Done (~13.4×) | — (wired via fe_matmul; regression-tested in tests/test_simd.c        |
+| Memory planner | `planner/memory_planner.c/h` | Standalone | **`fe_plan_apply` never called**                                      |
+| Execution engine | `runtime/engine.c/h` | Partial | Dispatches every op in the enum; AVX2 is wired. fe_plan_apply still not called — activations come from direct arena bump-alloc, not the planner|
 | ONNX importer | `importer/onnx.c/h` | Partial | Skips shape inference; limited op map; silently drops unsupported ops |
-| INT8 quantization | `quantization/quant.c/h` | Per-tensor | No per-channel scales; not integrated into a real model run |
-| Profiler + benchmarks | `tools/profiler.c/h`, `tools/bench_*.c` | Done | Benchmarks cover bare matmul only |
-| Build | `Makefile` | Linux-only | Windows + CLion machine; `.idea/` and stray files untracked |
+| INT8 quantization | `quantization/quant.c/h` | Per-tensor | No calibration pipeline; not integrated into a real model run |
+| Profiler + benchmarks | `tools/profiler.c/h`, `tools/bench_*.c` | Done | Benchmarks cover bare matmul only                                     |
+| Build | `Makefile` | Linux-only | Windows + CLion machine; `.idea/` and stray files untracked           |
 
 **Confirmed gaps, by location:**
 
