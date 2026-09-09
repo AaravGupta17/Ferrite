@@ -37,6 +37,34 @@ static void test_matmul_identity(void) {
     printf("PASS test_matmul_identity\n");
 }
 
+static void test_matmul_1x1(void) {
+    /* [[3]] @ [[4]] = [[12]] */
+    int shape[] = {1, 1};
+    FeTensor *A = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    FeTensor *B = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    FeTensor *C = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    ((float *)A->data)[0] = 3.0f;
+    ((float *)B->data)[0] = 4.0f;
+
+    assert(fe_matmul(A, B, C) == FE_OK);
+    assert(nearly_equal(((float *)C->data)[0], 12.0f));
+
+    fe_tensor_free(A); fe_tensor_free(B); fe_tensor_free(C);
+    printf("PASS test_matmul_1x1\n");
+}
+
+static void test_matmul_shape_mismatch(void) {
+    int sA[] = {2, 3};
+    int sB[] = {4, 5};   /* B.rows != A.cols -> must fail loudly */
+    int sC[] = {2, 5};
+    FeTensor *A = fe_tensor_alloc(DTYPE_FLOAT32, 2, sA);
+    FeTensor *B = fe_tensor_alloc(DTYPE_FLOAT32, 2, sB);
+    FeTensor *C = fe_tensor_alloc(DTYPE_FLOAT32, 2, sC);
+    assert(fe_matmul(A, B, C) == FE_ERR_SHAPE);
+    fe_tensor_free(A); fe_tensor_free(B); fe_tensor_free(C);
+    printf("PASS test_matmul_shape_mismatch\n");
+}
+
 static void test_matmul_known(void) {
     /* [[1,2],[3,4]] @ [[5,6],[7,8]] = [[19,22],[43,50]] */
     int shape22[] = {2, 2};
@@ -189,6 +217,41 @@ static void test_reduce(void) {
     printf("PASS test_reduce\n");
 }
 
+static void test_reduce_middle_axis(void) {
+    /* Reduce a 3D tensor over its middle axis: shape [2,3,4] over axis 1. */
+    int sIn[] = {2, 3, 4};
+    FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT32, 3, sIn);
+    for (int i = 0; i < 24; i++) ((float *)t->data)[i] = (float)i;
+
+    /* Sum over axis 1. Out shape [2,4].
+     * out[b][c] = sum_k t[b][k][c] */
+    int sOut[] = {2, 4};
+    FeTensor *out = fe_tensor_alloc(DTYPE_FLOAT32, 2, sOut);
+    assert(fe_sum(t, 1, out) == FE_OK);
+
+    for (int b = 0; b < 2; b++)
+        for (int c = 0; c < 4; c++) {
+            float expect = 0.0f;
+            for (int k = 0; k < 3; k++)
+                expect += (float)(b * 12 + k * 4 + c);
+            assert(nearly_equal(((float *)out->data)[b * 4 + c], expect));
+        }
+
+    /* Max over axis 1 — out[b][c] = max over k. Values ascend with d,
+     * so within (b,c) the max is at k=2. */
+    assert(fe_max(t, 1, out) == FE_OK);
+    for (int b = 0; b < 2; b++)
+        for (int c = 0; c < 4; c++)
+            assert(nearly_equal(((float *)out->data)[b * 4 + c],
+                                (float)(b * 12 + 2 * 4 + c)));
+
+    /* Invalid axis rejected. */
+    assert(fe_sum(t, 3, out) == FE_ERR_SHAPE);
+
+    fe_tensor_free(t); fe_tensor_free(out);
+    printf("PASS test_reduce_middle_axis\n");
+}
+
 static void test_dot(void) {
     int shape[] = {3};
     FeTensor *a = fe_tensor_alloc(DTYPE_FLOAT32, 1, shape);
@@ -290,15 +353,42 @@ static void test_rand_normal(void) {
     printf("PASS test_rand_normal\n");
 }
 
+/* Zero-size axes: elementwise over an empty tensor is a no-op, and a
+ * zero-K matmul is well-defined (fills zeros, touches no data). */
+static void test_empty_tensors(void) {
+    int s0[] = {0};
+    FeTensor *a = fe_tensor_alloc(DTYPE_FLOAT32, 1, s0);
+    FeTensor *b = fe_tensor_alloc(DTYPE_FLOAT32, 1, s0);
+    FeTensor *o = fe_tensor_alloc(DTYPE_FLOAT32, 1, s0);
+    assert(a && b && o);
+    assert(fe_tensor_numel(a) == 0 && fe_tensor_numel(o) == 0);
+    assert(fe_add(a, b, o) == FE_OK);
+
+    int sA[] = {2, 0}, sB[] = {0, 3}, sC[] = {2, 3};
+    FeTensor *A = fe_tensor_alloc(DTYPE_FLOAT32, 2, sA);
+    FeTensor *B = fe_tensor_alloc(DTYPE_FLOAT32, 2, sB);
+    FeTensor *C = fe_tensor_alloc(DTYPE_FLOAT32, 2, sC);
+    assert(fe_matmul(A, B, C) == FE_OK);
+    for (int i = 0; i < 6; i++) assert(((float *)C->data)[i] == 0.0f);
+
+    fe_tensor_free(a); fe_tensor_free(b); fe_tensor_free(o);
+    fe_tensor_free(A); fe_tensor_free(B); fe_tensor_free(C);
+    printf("PASS test_empty_tensors\n");
+}
+
 int main(void) {
     test_matmul_identity();
     test_matmul_known();
+    test_matmul_1x1();
+    test_matmul_shape_mismatch();
+    test_empty_tensors();
     test_relu();
     test_softmax_sums_to_one();
     test_softmax_numerical_stability();
     test_elementwise();
     test_scalar_ops();
     test_reduce();
+    test_reduce_middle_axis();
     test_dot();
     test_stability();
     test_rand_uniform();

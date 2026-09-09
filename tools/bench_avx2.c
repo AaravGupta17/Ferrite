@@ -1,12 +1,16 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <math.h>
 #include <time.h>
 #include "../core/tensor.h"
 #include "../ops/ops.h"
 #include "../simd/matmul_avx2.h"
+#include "../simd/elementwise_avx2.h"
 
 #define N    256
 #define RUNS 20
+#define EW    (1 << 20)   /* 1M floats per elementwise bench */
 
 static double now_ms(void) {
     struct timespec ts;
@@ -22,26 +26,79 @@ static double bench(FeStatus (*fn)(const FeTensor*, const FeTensor*, FeTensor*),
     return (now_ms() - start) / RUNS;
 }
 
-static void verify(FeTensor *A, FeTensor *B) {
+static void bench_matmul(void) {
     int shape[] = {N, N};
-    FeTensor *C1 = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
-    FeTensor *C2 = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    FeTensor *A = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    FeTensor *B = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    FeTensor *C = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    float *a = (float *)A->data;
+    float *b = (float *)B->data;
+    for (int i = 0; i < N*N; i++) { a[i] = (float)i * 0.001f; }
+    for (int i = 0; i < N*N; i++) { b[i] = (float)i * 0.001f; }
 
-    fe_matmul(A, B, C1);
-    fe_matmul_avx2(A, B, C2);
+    double t_naive = bench(fe_matmul,      A, B, C);
+    double t_avx2  = bench(fe_matmul_avx2, A, B, C);
 
-    float *c1 = (float *)C1->data;
-    float *c2 = (float *)C2->data;
-    float max_err = 0.0f;
+    double flops = 2.0 * N*N*N;
+    printf("MatMul [%dx%dx%d]: naive %.2f ms (%.2f GFLOPS), AVX2 %.2f ms (%.2f GFLOPS), %.1fx\n",
+           N, N, N, t_naive, flops / (t_naive * 1e6), t_avx2,
+           flops / (t_avx2 * 1e6), t_naive / t_avx2);
+    fe_tensor_free(A); fe_tensor_free(B); fe_tensor_free(C);
+}
+
+/* Elementwise: the AVX2 kernel (8-wide + scalar tail) runs on the same buffer
+ * pair as a plain scalar loop — same FLOPs, same memory traffic. */
+static void bench_elementwise(void) {
+    float *a = malloc(sizeof(float) * EW);
+    float *b = malloc(sizeof(float) * EW);
+    float *o = malloc(sizeof(float) * EW);
+    for (int i = 0; i < EW; i++) { a[i] = (float)i; b[i] = 1.0f; }
+
+    fe_add_avx2(a, b, o, EW);   /* warmup */
+    double start = now_ms();
+    for (int r = 0; r < RUNS; r++) fe_add_avx2(a, b, o, EW);
+    double t_avx2 = (now_ms() - start) / RUNS;
+
+    for (int i = 0; i < EW; i++) o[i] = a[i] + b[i];   /* warmup */
+    start = now_ms();
+    for (int r = 0; r < RUNS; r++)
+        for (int i = 0; i < EW; i++) o[i] = a[i] + b[i];
+    double t_naive = (now_ms() - start) / RUNS;
+
+    double gflops = (double)EW / (t_avx2 * 1e6);
+    printf("Elementwise add [%d]: naive %.2f ms, AVX2 %.2f ms (%.2f GFLOP/s), %.1fx\n",
+           EW, t_naive, t_avx2, gflops, t_naive / t_avx2);
+    free(a); free(b); free(o);
+}
+
+/* GEMM: the base case (no transpose, alpha=1, beta=0) routes to AVX2; the
+ * same logical multiply with transB=1 goes down the scalar path. Both do the
+ * same FLOPs, so the ratio is the AVX2-vs-scalar GEMM speedup. */
+static void bench_gemm_transposes(void) {
+    int sA[] = {N, N}, sB[] = {N, N}, sC[] = {N, N};
+    FeTensor *A = fe_tensor_alloc(DTYPE_FLOAT32, 2, sA);
+    FeTensor *B = fe_tensor_alloc(DTYPE_FLOAT32, 2, sB);
+    FeTensor *C = fe_tensor_alloc(DTYPE_FLOAT32, 2, sC);
     for (int i = 0; i < N*N; i++) {
-        float err = fabsf(c1[i] - c2[i]);
-        if (err > max_err) max_err = err;
+        ((float *)A->data)[i] = (float)i * 0.001f;
+        ((float *)B->data)[i] = (float)i * 0.001f;
     }
-    printf("Max error vs naive: %.2e %s\n",
-       max_err, max_err < 1.0f ? "(PASS)" : "(FAIL)");
 
-    fe_tensor_free(C1);
-    fe_tensor_free(C2);
+    fe_gemm(A, 0, B, 0, C, 1.0f, 0.0f);
+    double start = now_ms();
+    for (int i = 0; i < RUNS; i++) fe_gemm(A, 0, B, 0, C, 1.0f, 0.0f);
+    double t_avx2 = (now_ms() - start) / RUNS;
+
+    fe_gemm(A, 0, B, 1, C, 1.0f, 0.0f);
+    start = now_ms();
+    for (int i = 0; i < RUNS; i++) fe_gemm(A, 0, B, 1, C, 1.0f, 0.0f);
+    double t_scalar = (now_ms() - start) / RUNS;
+
+    double flops = 2.0 * N*N*N;
+    printf("GEMM [%dx%dx%d]: base(AVX2) %.2f ms (%.2f GFLOPS), transB(scalar) %.2f ms, %.1fx\n",
+           N, N, N, t_avx2, flops / (t_avx2 * 1e6), t_scalar,
+           t_scalar / t_avx2);
+    fe_tensor_free(A); fe_tensor_free(B); fe_tensor_free(C);
 }
 
 int main(void) {
@@ -49,32 +106,9 @@ int main(void) {
         printf("AVX2 not available on this CPU\n");
         return 1;
     }
-    printf("AVX2 available\n");
-
-    int shape[] = {N, N};
-    FeTensor *A = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
-    FeTensor *B = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
-    FeTensor *C = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
-
-    float *a = (float *)A->data;
-    float *b = (float *)B->data;
-    for (int i = 0; i < N*N; i++) { a[i] = (float)i * 0.001f; }
-    for (int i = 0; i < N*N; i++) { b[i] = (float)i * 0.001f; }
-
-    verify(A, B);
-
-    double t_naive = bench(fe_matmul,      A, B, C);
-    double t_avx2  = bench(fe_matmul_avx2, A, B, C);
-
-    double gflops_naive = (2.0 * N*N*N) / (t_naive * 1e6);
-    double gflops_avx2  = (2.0 * N*N*N) / (t_avx2  * 1e6);
-
-    printf("Naive: %.2f ms  %.2f GFLOPS\n", t_naive, gflops_naive);
-    printf("AVX2:  %.2f ms  %.2f GFLOPS\n", t_avx2,  gflops_avx2);
-    printf("Speedup: %.1fx\n", t_naive / t_avx2);
-
-    fe_tensor_free(A);
-    fe_tensor_free(B);
-    fe_tensor_free(C);
+    printf("AVX2 available\n\n");
+    bench_matmul();
+    bench_elementwise();
+    bench_gemm_transposes();
     return 0;
 }

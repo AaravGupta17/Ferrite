@@ -26,19 +26,21 @@ Ferrite is a zero-dependency C11 neural-network inference runtime built from fir
 | Batchnorm | `ops/norm.c` | Done | —                                                                     |
 | Stage 3 op library (Exp/Log/Pow, activations, GEMM/Transpose, Conv2D/Pool, LayerNorm/GroupNorm, Attention/MHA/Embedding/PosEnc) | `ops/math.c`, `ops/gemm.c`, `ops/pool.c`, `ops/conv2d.c`, `ops/sequence.c`, `ops/norm.c`, `ops/rand.c` | Done | —                                                                     |
 | SIMD AVX2 matmul | `simd/matmul_avx2.c/h` | Done (~13.4×) | — (wired via fe_matmul; regression-tested in tests/test_simd.c        |
-| Memory planner | `planner/memory_planner.c/h` | Standalone | **`fe_plan_apply` never called**                                      |
-| Execution engine | `runtime/engine.c/h` | Partial | Dispatches every op in the enum; AVX2 is wired. fe_plan_apply still not called — activations come from direct arena bump-alloc, not the planner|
-| ONNX importer | `importer/onnx.c/h` | Partial | Skips shape inference; limited op map; silently drops unsupported ops |
-| INT8 quantization | `quantization/quant.c/h` | Per-tensor | No calibration pipeline; not integrated into a real model run |
-| Profiler + benchmarks | `tools/profiler.c/h`, `tools/bench_*.c` | Done | Benchmarks cover bare matmul only                                     |
+| SIMD elementwise + GEMM | `simd/elementwise_avx2.c/h` | Done | relu/add/mul 8-wide + scalar tail; base-case GEMM dispatch; sigmoid deferred (no accurate AVX2 `exp`)                         |
+| Memory planner | `planner/memory_planner.c/h` | Done | Wired into `fe_runtime_run` (plan + apply); reuse proven by footprint test |
+| Execution engine | `runtime/engine.c/h` | Done | Dispatches every op in the enum; AVX2 wired; planner-driven activation buffer; ONNX-load→run works end-to-end (demo model: 13 nodes, 0.88 MB activation peak). Hardcoded infer_shapes replaced by `fe_infer_shapes` (optim/) |
+| Graph optimization | `optim/*.c/h` | Done — full pass pipeline | `fe_optimize(g, arena)`: shape-infer → simplify → constant-fold → Conv+BN fusion → CSE → dead-elim, wired into load; engine shapes delegated to `fe_infer_shapes`. `tests/test_opt.c` covers every pass + Conv+BN output equivalence |
+| ONNX importer | `importer/onnx.c/h` | Partial | Parses `value_info` (GraphProto fields 11/12/13); maps 20+ op strings (math, activations, pool, norms, conv2d); per-op attributes; unsupported ops fail loudly; Gemm→Linear warns on non-default attrs. Runs `fe_infer_shapes` after validate |
+| INT8 quantization | `quantization/quant.c/h` | Per-tensor + per-channel, wired into engine | `fe_quantize_model` converts MATMUL/LINEAR 2-D weights to per-channel INT8 (in-place repack, scales in weight arena); exec-plan wrappers route INT8 weights to `fe_linear_int8`/`fe_matmul_int8_dyn`; no calibration pipeline; verified by `test_quantized_engine_mlp` (err 0.0013) + `test_quantized_onnx_end_to_end` (tiny_mlp 268→100 B) |
+| Profiler + benchmarks | `tools/profiler.c/h`, `tools/bench.h/c`, `tools/bench_model.c` | Done | Shared bench framework; model-relevant bench (latency + memory + naive-vs-AVX2 table); bare-matmul benches remain               |
 | Build | `Makefile` | Linux-only | Windows + CLion machine; `.idea/` and stray files untracked           |
 
 **Confirmed gaps, by location:**
 
-- `runtime/engine.c` — every `FeOpType` has a dispatch case (Stage 3 adds math, activation, GEMM/transpose, conv2d/pool, norm, and sequence ops). Errors propagate, nothing is silently skipped. Remaining gap: the engine still calls the naive `fe_matmul`, not the AVX2 kernel.
-- `fe_plan_apply` (`planner/memory_planner.h`) is never called from `fe_runtime_run`. Activations come from arena bump-alloc instead.
-- The engine always uses the naive `fe_matmul`. Only `bench_avx2` exercises the AVX2 kernel.
-- The importer skips ONNX `value_info` (shape data). Shapes must be known ahead of time.
+- `runtime/engine.c` — dispatches every `FeOpType`; planner-driven activations; graph validation runs inside `fe_onnx_load` and `fe_runtime_init`. Remaining gap: the AVX2 remainder path and `N % 8 != 0` shapes still fall back to scalar.
+- **`infer_shapes` is now a general pass.** `optim/shape_infer.c` propagates shapes through the topo order with one rule per `FeOpType` (stage-3 ops included), to a fixpoint; unknown dims stay unresolved rather than erroring, and geometry contradictions fail loudly. Wired into both `fe_onnx_load` and `fe_runtime_run`, closing the importer's value_info gap.
+- Unsupported ONNX ops return `FE_ERR_SHAPE` loudly — nothing is silently dropped.
+- Dynamic ONNX dimensions (`dim_param`) parse as 0 and rely on runtime shape inference.
 - Repo hygiene: `.idea/` untracked; two empty stray files (`float32`, `int8`) in the root.
 
 ---
@@ -171,13 +173,14 @@ If threading or dynamic capacities are chosen, the shape is the same: build → 
 ## 5. Immediate Next Steps (Ordered)
 
 1. Hygiene: gitignore `.idea/`; delete stray empty `float32`/`int8`; remove root binaries. *(10 minutes; unblocks everything.)*
-2. Build story: add `CMakeLists.txt` for CLion/Windows, or document the WSL path. Get a documented one-command build with all tests green.
-3. Write `ops/batchnorm.c` + test; add `CONV1D`/`BATCHNORM` dispatch in `runtime/engine.c`.
-4. Call `fe_plan_apply` from `fe_runtime_run`; assert footprint equals `total_activation_bytes`.
-5. Parse `value_info` in `importer/onnx.c`; add shape inference; export a small trained MNIST model.
-6. Route dispatch to `fe_matmul_avx2` behind `fe_cpu_has_avx2()`; build the benchmark suite.
-7. Decide one hard feature (recommend per-channel quant); implement, test, measure.
-8. Build the golden-tensor harness; rewrite the README.
+2. Build story: add `CMakeLists.txt` for CLion/Windows. *(done — `cmake -S . -B build -G Ninja`)*
+3. Wire `fe_plan_apply` into `fe_runtime_run`; assert footprint equals `total_activation_bytes`. *(done — Phase 1)*
+4. Parse `value_info` in `importer/onnx.c`; broaden the op map; fail loudly on unsupported ops. *(done — Phase 3)*
+5. ~~**Full shape-inference pass**~~ (Stage 12): one shape table keyed by op, propagating from inputs through every supported op. Closes the importer's value_info reliance on static shapes. **Done** — and with it the whole Stage 12 optimizer (folding, Conv+BN fusion, CSE, simplification, dead elimination) ships as `fe_optimize`, wired into `fe_onnx_load`.
+6. ~~**Static execution plan**~~ (Stage 13): dispatch is dead — `fe_runtime_run` walks a flat array of kernel function pointers resolved at plan-build time, executes a cached memory plan, and re-plans only when the input shape changes. **Done** — `runtime/exec_plan.c/h`, embedded in `FeRuntime`; `test_exec_plan_static` proves steady-state runs do zero re-analysis. Prefetching (the one deferred Stage 13 item) waits for a benchmark that shows it paying for itself.
+7. Route dispatch to `fe_matmul_avx2` behind `fe_cpu_has_avx2()`; build the benchmark suite. *(dispatch already wired; expand `tools/bench_*` across sizes, compare to a reference)*
+8. Decide one hard feature (recommend per-channel quant); implement, test, measure.
+9. Build the golden-tensor harness; rewrite the README.
 
 ---
 

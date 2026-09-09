@@ -63,6 +63,11 @@ FeStatus fe_plan_memory(const FeGraph *g, FePlan *plan);
  *
  * Must be called once before fe_runtime_run when using the planner.
  * The activation_buf must be at least plan->total_activation_bytes bytes.
+ *
+ * FeTensor metadata structs are arena-allocated from metadata_arena;
+ * the first plan->total_activation_bytes bytes of that arena are
+ * reserved as the data region so metadata never collides with data
+ * (the runtime passes the activation arena itself as metadata_arena).
  */
 FeStatus fe_plan_apply(FeGraph *g, FePlan *plan,
                         void *activation_buf, size_t buf_size,

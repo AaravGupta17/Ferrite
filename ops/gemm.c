@@ -1,5 +1,6 @@
 /* ops/gemm.c — general matrix multiply with transposes and scaling (Stage 3). */
 #include "ops.h"
+#include "matmul_avx2.h"
 #include <string.h>
 
 /*
@@ -8,6 +9,8 @@
  * We build the (possibly transposed) operand views with fe_tensor_transpose
  * (O(1), no data copy) and reuse the proven naive matmul as the reference.
  * The alpha/beta/accumulate epilogue runs in-place on the output buffer.
+ * The base case (no transpose, alpha=1, beta=0 — a plain C = A@B) routes to
+ * the AVX2 matmul when available; anything else stays scalar.
  */
 FeStatus fe_gemm(const FeTensor *A, int transA,
                  const FeTensor *B, int transB,
@@ -27,6 +30,13 @@ FeStatus fe_gemm(const FeTensor *A, int transA,
         return FE_ERR_SHAPE;
     if (A->dtype != DTYPE_FLOAT32 || B->dtype != DTYPE_FLOAT32 ||
         C->dtype != DTYPE_FLOAT32) return FE_ERR_DTYPE;
+
+    if (fe_cpu_has_avx2() && !transA && !transB &&
+        alpha == 1.0f && beta == 0.0f) {
+        FeStatus s = fe_matmul_avx2(A, B, C);
+        if (s == FE_OK) return s;
+        /* fall through to scalar on any AVX2-path failure */
+    }
 
     const float *a = (const float *)A->data;
     const float *b = (const float *)B->data;

@@ -75,13 +75,18 @@ typedef struct {
     FeDtype  dtype;
     FeTensor *tensor;   /* NULL until memory planner runs */
     int      is_weight; /* 1 if this tensor holds model weights */
+    float    *scales;   /* per-output-channel scales for INT8 weights
+                         * (per-channel pre-quantized; NULL otherwise).
+                         * Arena-allocated with the weight it describes. */
+    int      n_scales;  /* 0 for float weights */
 } FeTensorEntry;
 
 /*
  * A node in the computation graph.
  * Inputs and outputs are indices into the graph's tensor registry.
  */
-typedef struct {
+typedef struct FeNode FeNode;
+struct FeNode {
     char     name[FE_NAME_LEN];
     FeOpType op;
     int      inputs [FE_MAX_NODE_INPUTS];   /* tensor indices */
@@ -103,7 +108,7 @@ typedef struct {
         struct { int transA, transB; float alpha, beta; } gemm;
         struct { int num_heads; }            multihead;
     } attrs;
-} FeNode;
+};
 
 /*
  * The computation graph.

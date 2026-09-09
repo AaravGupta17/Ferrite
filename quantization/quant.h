@@ -4,9 +4,8 @@
 
 #include "types.h"
 #include "tensor.h"
-#include "types.h"
-#include "tensor.h"
 #include "graph.h"
+#include "allocator.h"
 
 /*
  * Per-tensor quantization parameters.
@@ -96,7 +95,93 @@ FeStatus fe_dequantize_per_channel(const FeTensor *in, const float *scales,
 FeStatus fe_matmul_int8_per_channel(const FeTensor *A, const FeTensor *B,
                                      FeTensor *C);
 
-FeStatus fe_quantize_weights(struct FeGraph *g,
-                              FeQuantParams *params, int n_params);
+/*
+ * Quantized matmul with per-channel int16 weight quantization.
+ *
+ * A: [M, K] float32 — activation scale per inference
+ * B: [K, N] int16     — weights already quantized per-channel
+ * w_scales: N floats   — per-output-channel weight scales
+ * C: [M, N] float32   — C[i][j] = (Σ qA[i][k]·Wq[k][j])·scale_A·w_scales[j]
+ *
+ * The activation is dynamically quantized per call: max|A| → scale_A → int16
+ * products accumulate in int32, then dequantized with scale_A * w_scales[j].
+ */
+FeStatus fe_matmul_int16_dyn(const FeTensor *A, const FeTensor *Wq,
+                             const float *w_scales, FeTensor *C);
+
+/*
+ * Quantized linear with per-channel int16 weight quantization and unquantized
+ * bias add: C[i][j] += b[j]. Same contract as fe_matmul_int16_dyn plus bias.
+ */
+FeStatus fe_linear_int16(const FeTensor *A, const FeTensor *Wq,
+                          const float *w_scales, const FeTensor *b,
+                          FeTensor *C);
+
+/*
+ * Engine-path quantized matmul with PRE-quantized weights and dynamic
+ * activation quantization — no allocation, safe for the hot path.
+ *
+ * A: [M, K] float32       — activations, quantized per call (dynamic):
+ *                            scale = max|A|/127, then int8 products
+ * Wq: [K, N] int8         — weights already quantized per-channel by
+ *                            fe_quantize_model (n_scales == N)
+ * w_scales: N floats      — per-output-channel weight scales
+ * C:  [M, N] float32      — C[i][j] = (Σ qA[i][k]·Wq[k][j])·scale_A·w_scales[j]
+ *
+ * Two passes over A (max, then product loop); quantized activations are
+ * never materialized, so no scratch buffer is needed.
+ */
+FeStatus fe_matmul_int8_dyn(const FeTensor *A, const FeTensor *Wq,
+                             const float *w_scales, FeTensor *C);
+
+/*
+ * Engine-path quantized linear layer: fe_matmul_int8_dyn plus an
+ * unquantized float bias add: C[i][j] += b[j]. Same pre-quantized-weight
+ * contract as fe_matmul_int8_dyn; b is [N] float32 and never quantized.
+ */
+FeStatus fe_linear_int8(const FeTensor *A, const FeTensor *Wq,
+                         const float *w_scales, const FeTensor *b,
+                         FeTensor *C);
+
+/*
+ * Quantize a graph in place for engine use (Stage 15).
+ *
+ * Every 2D float weight consumed as inputs[1] of a MATMUL or LINEAR node is
+ * per-channel quantized to INT8: its data buffer is repacked in place (no
+ * reallocation — the buffer already exists) and a per-output-channel scale
+ * array is arena-allocated and recorded on the tensor entry (e->scales /
+ * e->n_scales). 1D biases and every other weight stay float32.
+ *
+ * Activations are left float32; they are quantized dynamically per inference
+ * by the engine path (fe_matmul_int8_dyn / fe_linear_int8), which routes
+ * MATMUL/LINEAR nodes with INT8 weights to those kernels.
+ *
+ * Must be called after weights are allocated (post fe_runtime_init +
+ * fe_runtime_alloc_weights); the scale arrays live in the weight arena for
+ * the graph's lifetime.
+ */
+FeStatus fe_quantize_model(FeGraph *g, FeArena *weight_arena);
+
+/*
+ * Per-tensor quantize a graph's weight tensors in place.
+ *
+ * Each float32 weight is converted to INT8 reusing its own buffer (the data
+ * is packed down into the first numel bytes; nbytes is updated), so the
+ * function works whether the weight was malloc- or arena-backed. Store scale
+ * factors in params (one per converted weight, in registry order).
+ *
+ * NOTE: does not record scales on the registry and does not qualify for the
+ * engine path — use fe_quantize_model for engine-integrated quantization.
+ */
+FeStatus fe_quantize_weights(FeGraph *g,
+                               FeQuantParams *params, int n_params);
+
+/*
+ * Quantize a float32 tensor to int16 using symmetric per-tensor quantization.
+ * scale = max(|x|) / 32767;  q = clamp(round(x / scale), -32768, 32767).
+ * out must be DTYPE_INT16 with same shape as in. Stores scale in params[0].
+ */
+FeStatus fe_quantize_int16(const FeTensor *in, FeTensor *out,
+                           float *params);
 
 #endif // FERRITE_QUANT_H

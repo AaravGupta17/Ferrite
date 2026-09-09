@@ -1,6 +1,9 @@
 #include <stdio.h>
+#include <string.h>
+#include <math.h>
 #include <assert.h>
 #include "../core/tensor.h"
+#include "../core/fp16.h"
 
 static void test_alloc_strides(void) {
     int shape[] = {3, 4};
@@ -65,6 +68,72 @@ static void test_slice(void) {
     printf("test_slice passed\n");
 }
 
+static void test_slice_noncontiguous(void) {
+    /* Slicing a transposed (non-contiguous) tensor must shift the data
+     * pointer by `start * strides[axis]` and keep the parent's strides —
+     * the view still reads through the transposed layout. */
+    int shape[] = {2, 3};
+    FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    for (int i = 0; i < 6; i++) ((float *)t->data)[i] = (float)i;
+    /* A[0] = 0 1 2 ; A[1] = 3 4 5, strides {3,1} */
+    FeTensor *tr = fe_tensor_transpose(t, 0, 1);
+    /* T shape {3,2}, strides {1,3}: T = [0 3; 1 4; 2 5] */
+
+    /* Outer-axis slice: T[1:2, :] = [1 4] — non-contiguous in memory
+     * (elements at byte offsets 4 and 16). */
+    FeTensor *s1 = fe_tensor_slice(tr, 0, 1, 1);
+    assert(s1->shape[0] == 1 && s1->shape[1] == 2);
+    assert(s1->strides[0] == 1 && s1->strides[1] == 3);
+    assert((char *)s1->data == (char *)t->data + 4);   /* start * stride0 * 4 */
+    int idx[] = {0, 0};
+    assert(fe_tensor_get_f32(s1, idx) == 1.0f);
+    idx[1] = 1;
+    assert(fe_tensor_get_f32(s1, idx) == 4.0f);
+    fe_tensor_free(s1);
+
+    /* Inner-axis slice: T[:, 1:2] = [3; 4; 5] (single column of the view). */
+    FeTensor *s2 = fe_tensor_slice(tr, 1, 1, 1);
+    assert(s2->shape[0] == 3 && s2->shape[1] == 1);
+    assert(s2->strides[0] == 1 && s2->strides[1] == 3);
+    assert((char *)s2->data == (char *)t->data + 1 * 3 * 4);   /* start*stride1*4 */
+    int i2[] = {2, 0};
+    assert(fe_tensor_get_f32(s2, i2) == 5.0f);
+    fe_tensor_free(s2);
+
+    fe_tensor_free(tr);
+    fe_tensor_free(t);
+    printf("PASS test_slice_noncontiguous\n");
+}
+
+static void test_int_dtype_sizing(void) {
+    /* Strides are element counts for every dtype; nbytes must scale with
+     * fe_dtype_size. INT8/INT32/FLOAT64 are exercised here explicitly. */
+    int shape[] = {3, 5};
+
+    FeTensor *i8 = fe_tensor_alloc(DTYPE_INT8, 2, shape);
+    FeTensor *i32 = fe_tensor_alloc(DTYPE_INT32, 2, shape);
+    FeTensor *f64 = fe_tensor_alloc(DTYPE_FLOAT64, 2, shape);
+    assert(i8 && i32 && f64);
+    assert(fe_dtype_size(DTYPE_INT8) == 1 && fe_dtype_size(DTYPE_INT32) == 4 &&
+           fe_dtype_size(DTYPE_FLOAT64) == 8);
+    assert(i8->nbytes == 15);    /* 15 * 1 */
+    assert(i32->nbytes == 60);   /* 15 * 4 */
+    assert(f64->nbytes == 120);  /* 15 * 8 */
+    assert(i32->strides[0] == 5 && i32->strides[1] == 1);
+    assert(fe_tensor_numel(i32) == 15);
+
+    /* fe_tensor_copy is dtype-preserving and must round-trip INT32. */
+    for (int i = 0; i < 15; i++) ((int32_t *)i32->data)[i] = i * 1000;
+    FeTensor *dst = fe_tensor_alloc(DTYPE_INT32, 2, shape);
+    assert(fe_tensor_copy(dst, i32) == FE_OK);
+    assert(memcmp(dst->data, i32->data, 60) == 0);
+    assert(fe_tensor_copy(dst, f64) == FE_ERR_DTYPE);   /* dtype mismatch */
+
+    fe_tensor_free(i8); fe_tensor_free(i32); fe_tensor_free(f64);
+    fe_tensor_free(dst);
+    printf("PASS test_int_dtype_sizing\n");
+}
+
 static void test_broadcast(void) {
     int shape[] = {1, 3};                 /* a "row" of 3 values */
     FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
@@ -88,6 +157,76 @@ static void test_broadcast(void) {
     fe_tensor_free(b);
     fe_tensor_free(t);
     printf("PASS test_broadcast\n");
+}
+
+static void test_broadcast_view_equals_copy(void) {
+    /* A stride==0 broadcast view must behave identically to its
+     * materialized copy. This is the invariant kernels rely on. */
+    int shape[] = {1, 3};
+    FeTensor *t  = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    ((float *)t->data)[0] = 1.0f;
+    ((float *)t->data)[1] = 2.0f;
+    ((float *)t->data)[2] = 3.0f;
+
+    int target[] = {4, 3};
+    FeTensor *b = fe_tensor_broadcast_to(t, 2, target);
+    assert(b->strides[0] == 0);            /* view, not a copy */
+    assert(b->owns_data == false);
+    assert(b->data == t->data);
+
+    /* Materialize: fe_tensor_contiguous copies to a dense buffer. */
+    FeTensor *materialized = fe_tensor_contiguous(b);
+    assert(materialized != NULL);
+    assert(materialized->strides[0] == 3);  /* dense, not broadcast */
+    assert(materialized->strides[1] == 1);
+    assert(materialized->owns_data == true);
+
+    /* The dense copy must reproduce the broadcast pattern:
+     * each row is [1,2,3]. */
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 3; c++)
+            assert(((float *)materialized->data)[r * 3 + c] == (float)(c + 1));
+
+    fe_tensor_free(b);
+    fe_tensor_free(materialized);
+    fe_tensor_free(t);
+    printf("PASS test_broadcast_view_equals_copy\n");
+}
+
+static void test_numel_and_contiguous(void) {
+    int shape[] = {2, 3, 4};
+    FeTensor *t = fe_tensor_alloc(DTYPE_FLOAT32, 3, shape);
+    assert(fe_tensor_numel(t) == 24);
+    assert(fe_tensor_is_contiguous(t) == true);
+
+    /* A transpose makes it non-contiguous. */
+    FeTensor *tr = fe_tensor_transpose(t, 0, 2);
+    assert(fe_tensor_is_contiguous(tr) == false);
+    assert(fe_tensor_numel(tr) == 24);   /* numel unchanged by view */
+
+    fe_tensor_free(tr);
+    fe_tensor_free(t);
+    printf("PASS test_numel_and_contiguous\n");
+}
+
+static void test_copy_ownership(void) {
+    /* fe_tensor_copy writes into a caller-allocated output. */
+    int shape[] = {2, 3};
+    FeTensor *src = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    FeTensor *dst = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
+    for (int i = 0; i < 6; i++) ((float *)src->data)[i] = (float)(i + 1);
+
+    assert(fe_tensor_copy(dst, src) == FE_OK);
+    for (int i = 0; i < 6; i++)
+        assert(((float *)dst->data)[i] == (float)(i + 1));
+
+    /* Element-count mismatch must fail, not silently truncate. */
+    int bad_shape[] = {3, 3};   /* 9 elements vs src's 6 */
+    FeTensor *bad = fe_tensor_alloc(DTYPE_FLOAT32, 2, bad_shape);
+    assert(fe_tensor_copy(bad, src) == FE_ERR_SHAPE);
+
+    fe_tensor_free(src); fe_tensor_free(dst); fe_tensor_free(bad);
+    printf("PASS test_copy_ownership\n");
 }
 
 static void test_reshape_noncontiguous_fails(void) {
@@ -177,6 +316,49 @@ static void test_float64(void) {
     printf("PASS test_float64\n");
 }
 
+/*
+ * Stage 15: FP16 storage support. DTYPE_FLOAT16 is a storage format —
+ * compute happens in FP32 after upconvert. Check known bit patterns, the
+ * dtype size, and a bulk round-trip against a host-side oracle sweep.
+ */
+static void test_fp16_roundtrip(void) {
+    assert(fe_dtype_size(DTYPE_FLOAT16) == 2);
+
+    /* Exact representable values: bit pattern + round-trip. */
+    struct { float v; uint16_t bits; } cases[] = {
+        {  1.0f, 0x3C00 }, { -2.0f, 0xC000 }, {  0.5f, 0x3800 },
+        {  0.0f, 0x0000 }, { -0.0f, 0x8000 }, { 65504.0f, 0x7BFF },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        uint16_t h = fe_f32_to_fp16(cases[i].v);
+        assert(h == cases[i].bits);
+        float back = fe_fp16_to_f32(h);
+        assert(back == cases[i].v);
+    }
+
+    /* Inf saturates to half Inf; NaN keeps the NaN class. */
+    assert(fe_f32_to_fp16((float)INFINITY) == 0x7C00);
+    assert(fe_f32_to_fp16(-(float)INFINITY) == 0xFC00);
+    assert((fe_f32_to_fp16((float)NAN) & 0x7C00) == 0x7C00);
+
+    /* Sweep values through round-trip; FP16 precision <= 2^-10 relative. */
+    float vals[] = {0.1f, 0.333f, 3.14159f, 100.0f, -42.5f, 1.0e-4f, 6.1e-5f};
+    for (size_t i = 0; i < sizeof(vals) / sizeof(vals[0]); i++) {
+        float back = fe_fp16_to_f32(fe_f32_to_fp16(vals[i]));
+        float rel = back != 0.0f ? fabsf(back - vals[i]) / fabsf(vals[i]) : 0.0f;
+        assert(rel < 0.000978f);           /* 2^-10 + slack */
+    }
+
+    /* Bulk conversion with matched position (in place tolerant). */
+    float src[4] = {1.0f, 2.0f, -3.5f, 0.25f};
+    uint16_t hb[4];
+    float dst[4];
+    fe_f32_to_fp16_buf(src, hb, 4);
+    fe_fp16_to_f32_buf(hb, dst, 4);
+    for (int i = 0; i < 4; i++) assert(dst[i] == src[i]);
+    printf("PASS test_fp16_roundtrip\n");
+}
+
 int main(void) {
     test_alloc_strides();
     test_transpose_no_copy();
@@ -184,9 +366,15 @@ int main(void) {
     test_reshape_noncontiguous_fails();
     test_get_set_after_transpose();
     test_slice();
+    test_slice_noncontiguous();
+    test_int_dtype_sizing();
     test_broadcast();
+    test_broadcast_view_equals_copy();
+    test_numel_and_contiguous();
+    test_copy_ownership();
     test_allclose();
     test_float64();
+    test_fp16_roundtrip();
     printf("\nAll tests passed.\n");
     return 0;
 }

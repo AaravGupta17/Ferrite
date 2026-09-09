@@ -139,12 +139,32 @@ static void test_validate_catches_double_producer(void) {
     printf("PASS test_validate_catches_double_producer\n");
 }
 
+static void test_topo_catches_cycle(void) {
+    /* A -> B -> A is a cycle; topo sort must fail and order fewer than n. */
+    FeGraph g;
+    fe_graph_init(&g);
+    int s[] = {1, 4};
+    int t0 = fe_graph_add_tensor(&g, "t0", DTYPE_FLOAT32, 2, s, 0);
+    int t1 = fe_graph_add_tensor(&g, "t1", DTYPE_FLOAT32, 2, s, 0);
+
+    /* n0: consumes t0, produces t1;  n1: consumes t1, produces t0 */
+    int inA[]  = {t0}; int outA[] = {t1};
+    int inB[]  = {t1}; int outB[] = {t0};
+    fe_graph_add_node(&g, "n0", FE_OP_RELU, inA, 1, outA, 1);
+    fe_graph_add_node(&g, "n1", FE_OP_RELU, inB, 1, outB, 1);
+
+    /* Kahn's algorithm must detect the cycle and report an error. */
+    assert(fe_graph_topo_sort(&g) != FE_OK);
+    printf("PASS test_topo_catches_cycle\n");
+}
+
 int main(void) {
     test_build_and_sort();
     test_topo_diamond();
     test_validate_passes_on_valid_graph();
     test_validate_catches_out_of_range_index();
     test_validate_catches_double_producer();
+    test_topo_catches_cycle();
     printf("\nAll tests passed.\n");
     return 0;
 }

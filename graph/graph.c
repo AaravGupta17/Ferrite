@@ -19,6 +19,8 @@ int fe_graph_add_tensor(FeGraph *g, const char *name,
     e->ndim      = ndim;
     e->is_weight = is_weight;
     e->tensor    = NULL;
+    e->scales    = NULL;
+    e->n_scales  = 0;
     memcpy(e->shape, shape, ndim * sizeof(int));
 
     return g->n_tensors++;
@@ -131,6 +133,30 @@ static const char *op_name(FeOpType op) {
         case FE_OP_BATCHNORM: return "BatchNorm";
         case FE_OP_ADD:       return "Add";
         case FE_OP_FLATTEN:   return "Flatten";
+        case FE_OP_SUB:       return "Sub";
+        case FE_OP_MUL:       return "Mul";
+        case FE_OP_DIV:       return "Div";
+        case FE_OP_NEG:       return "Neg";
+        case FE_OP_EXP:       return "Exp";
+        case FE_OP_LOG:       return "Log";
+        case FE_OP_POW:       return "Pow";
+        case FE_OP_SIGMOID:   return "Sigmoid";
+        case FE_OP_TANH:      return "Tanh";
+        case FE_OP_GELU:      return "Gelu";
+        case FE_OP_LEAKY_RELU:return "LeakyRelu";
+        case FE_OP_ELU:       return "Elu";
+        case FE_OP_SWISH:     return "Swish";
+        case FE_OP_GEMM:      return "Gemm";
+        case FE_OP_TRANSPOSE: return "Transpose";
+        case FE_OP_CONV2D:    return "Conv2D";
+        case FE_OP_MAXPOOL:   return "MaxPool";
+        case FE_OP_AVGPOOL:   return "AvgPool";
+        case FE_OP_LAYERNORM: return "LayerNorm";
+        case FE_OP_GROUPNORM: return "GroupNorm";
+        case FE_OP_ATTENTION: return "Attention";
+        case FE_OP_MULTIHEAD_ATTN: return "MHA";
+        case FE_OP_EMBEDDING: return "Embedding";
+        case FE_OP_POSITIONAL_ENCOD: return "PosEnc";
         default:              return "Unknown";
     }
 }

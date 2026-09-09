@@ -290,30 +290,31 @@ Write tensor metadata pointing into the activation buffer at the planned offsets
 **Bottom line.** `FeRuntime` ties the graph, arenas, and kernels together.
 
 ```c
-typedef struct {
+typedef struct FeRuntime {
     FeGraph    *graph;
     FeArena     weight_arena;
     FeArena     activation_arena;
     FeProfiler *profiler;
+    FeExecPlan  exec;   /* cached kernel resolution + memory plan */
 } FeRuntime;
 ```
 
 **Lifecycle.**
 
-1. **`fe_runtime_init`** — stores the graph, initializes both arenas, runs the topological sort if needed.
-2. **`fe_runtime_alloc_weights`** — allocates every `is_weight` tensor from the weight arena, once, at load.
-3. **`fe_runtime_run`** — one inference:
-   - Reset the activation arena.
-   - Clear all non-weight tensor pointers.
-   - Bind the caller's input tensor to the `FE_OP_INPUT` node's output.
-   - `alloc_activations()` allocates every non-weight tensor from the activation arena (bump pointer, so cheap).
-   - Walk `topo_order`, dispatching each node to its kernel via a `switch` on `node->op`, using the `IN(i)` / `OUT(i)` macros (tensor index → tensor pointer).
-   - Copy the output node's result into the caller's buffer.
-4. **`dispatch_node`** wraps every op call with `fe_profiler_now_ns()` timing when a profiler is attached.
+1. **`fe_runtime_init`** — stores the graph, initializes both arenas, runs the topological sort and validation.
+2. **`fe_runtime_alloc_weights`** — allocates every unbacked `is_weight` tensor from the weight arena, once, at load. Folded/fused constants allocated during `fe_optimize` are already backed and skipped.
+3. **`fe_runtime_run`** — one inference, delegated to the static execution plan (`runtime/exec_plan.c`):
+   - **First run (or input-shape change):** re-seed the input (dynamic graphs), forget every produced shape, `fe_infer_shapes`, `fe_plan_memory` (cached `FePlan`), and `fe_exec_build` resolves each `topo_order` node to a wrapper function via the `k_fns[]` table.
+   - Reset the activation arena; clear non-weight tensor pointers.
+   - `fe_plan_apply` re-assigns the cached byte offsets (data region reserved before `FeTensor` metadata).
+   - Bind the caller's input tensor (`find_graph_input` — ONNX graphs have no `FE_OP_INPUT` node).
+   - Walk the flat `FeExecStep{fn, node_index}` array — no `switch`, no lifetime analysis.
+   - Copy the OUTPUT node's result (or, for ONNX graphs, the last planned node's output) into the caller's buffer.
+4. **`fe_exec_*` wrappers** time every op call with `fe_profiler_now_ns()` when a profiler is attached (`EXEC_BEGIN`/`EXEC_END` per step).
 
-**Current state.** The engine uses the arena bump allocator directly for activations. It does **not** consume the planner's `FePlan`. The planner exists as a standalone, tested subsystem. Wiring `fe_plan_apply` into the runtime is an obvious integration task.
+**Current state.** `FeRuntime` embeds the `FeExecPlan` (`exec`, hence the `runtime/exec_plan.h` include in `engine.h`). The engine no longer dispatches: steady-state runs execute the cached plan end-to-end, and the only per-run analysis is an input-shape comparison. The memory planner provides the layout the plan re-applies per run.
 
-**Dispatched ops:** every `FeOpType` in the enum now has a `switch` case in `dispatch_node`. Core ops: `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `ADD`, `FLATTEN`, `CONV1D`, `BATCHNORM`. Stage 3: basic math (`SUB`/`MUL`/`DIV`/`NEG`/`EXP`/`LOG`/`POW`), activations (`SIGMOID`/`TANH`/`GELU`/`LEAKY_RELU`/`ELU`/`SWISH`), linear algebra (`GEMM`, `TRANSPOSE`), CNN (`CONV2D`, `MAXPOOL`, `AVGPOOL`, `LAYERNORM`, `GROUPNORM`), and sequence (`ATTENTION`, `MULTIHEAD_ATTN`, `EMBEDDING`, `POSITIONAL_ENCOD`). No op is silently skipped.
+**Dispatched ops:** every `FeOpType` in the enum has an entry in the `k_fns[]` table (`runtime/exec_plan.c`), mapped to a wrapper that calls the `ops/` kernel (or `simd/` behind `fe_cpu_has_avx2`). Core ops: `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `ADD`, `FLATTEN`, `CONV1D`, `BATCHNORM`. Stage 3: basic math (`SUB`/`MUL`/`DIV`/`NEG`/`EXP`/`LOG`/`POW`), activations (`SIGMOID`/`TANH`/`GELU`/`LEAKY_RELU`/`ELU`/`SWISH`), linear algebra (`GEMM`, `TRANSPOSE`), CNN (`CONV2D`, `MAXPOOL`, `AVGPOOL`, `LAYERNORM`, `GROUPNORM`), and sequence (`ATTENTION`, `MULTIHEAD_ATTN`, `EMBEDDING`, `POSITIONAL_ENCOD`). A node with no table entry fails loudly at plan build — nothing is silently skipped.
 
 ---
 
@@ -331,8 +332,8 @@ typedef struct {
 
 **ONNX structure** (ModelProto → GraphProto → NodeProto/TensorProto):
 - Top level: find `field 7` (graph); skip everything else.
-- `parse_graph`: `field 1` = node (repeated NodeProto), `field 5` = initializer (repeated TensorProto), `field 11` = input ValueInfo (skipped — the test harness infers shapes instead).
-- `parse_node`: reads input names (`field 1`), output names (`field 2`), node name (`field 3`), and `op_type` (`field 4`). Maps the op string to an `FeOpType` via `op_type_from_string`. **Unsupported ops are logged and skipped**, keeping the load resilient.
+- `parse_graph`: `field 1` = node (repeated NodeProto), `field 5` = initializer (repeated TensorProto), `field 11` = input ValueInfo (shape data feeds static `FeTensorEntry`s via fields 11/12/13; remaining unknowns are filled by the shape-inference pass).
+- `parse_node`: reads input names (`field 1`), output names (`field 2`), node name (`field 3`), and `op_type` (`field 4`). Maps the op string to an `FeOpType` via `op_type_from_string`. `Gemm` maps to `FE_OP_LINEAR` with a warning when non-default `transA`/`transB`/`alpha`/`beta` would change the result; **unsupported ops fail loudly** rather than being skipped.
 - `parse_initializer`: reads dims (`field 1`), data_type (`field 2`, assumed float32), name (`field 8`), and `raw_data` (`field 9`, packed float32 bytes). Registers the tensor as a weight and `memcpy`s its data into the weight arena.
 
 `find_or_add_tensor` deduplicates tensors by name, so one graph entry serves every node referencing the same tensor.
@@ -345,7 +346,7 @@ After parsing, the graph is topologically sorted and validated before returning 
 
 ### `quantization/quant.h` / `quantization/quant.c`
 
-**Bottom line.** Post-training INT8 quantization with **symmetric per-tensor** scaling.
+**Bottom line.** Post-training INT8 quantization with **symmetric per-tensor or per-channel** scaling, **integrated into the engine**.
 
 - `FeQuantParams` = `{ float scale; int zero_point; }`. `zero_point` is always 0 (symmetric).
 - **`fe_quantize`** — `scale = max(|x|)/127`, then `q = clamp(round(x/scale), -127, 127)`.
@@ -354,9 +355,14 @@ After parsing, the graph is topologically sorted and validated before returning 
   1. Quantize A and B to INT8.
   2. Multiply with **int32 accumulation** (protects against overflow).
   3. Dequantize the result with the combined scale `pA.scale * pB.scale`.
-- **`fe_quantize_weights`** — converts all weight tensors to INT8 and stores their scales.
+- **`fe_quantize_per_channel` / `fe_matmul_int8_per_channel`** — one scale per output column, which matters for skewed weight distributions (per-channel error 0.00015 vs per-tensor 0.053 on the skewed test).
+- **`fe_quantize_weights`** — converts all weight tensors to INT8, repacking **in place** (the INT8 data is ¼ the size, so it fits the float buffer; arena-backed weights are never `fe_tensor_free`d). The bias stays float.
+- **`fe_quantize_model(g, arena)`** — the engine hook. For every 2-D float weight consumed as `inputs[1]` of a MATMUL/LINEAR node: quantizes per channel, appends the scales to the weight arena (bumping the bump pointer past the already-loaded weight bytes), repacks the weight buffer in place, and sets the entry's dtype/scales. Weights not feeding a linear op are left float.
+- **`fe_matmul_int8_dyn` / `fe_linear_int8`** — run-time INT8 GEMM with dynamic two-pass activation quantization (no scratch buffer, no per-run allocation). Used by the engine.
 
-This is the classic symmetric INT8 scheme used in early quantized ONNX runtimes. The natural improvement is **per-channel scales** for convolutional weights.
+**Engine integration.** `ex_matmul`/`ex_linear` in `runtime/exec_plan.c` branch on the weight tensor's dtype per node: INT8 → `fe_linear_int8`/`fe_matmul_int8_dyn` (scales read from the graph entry), float → the scalar/AVX2 float path. A model can mix float and quantized linear layers; quantization is a load-time choice (`fe_quantize_model` after load/runtime-init), not a compile-time flag.
+
+This is the classic symmetric INT8 scheme used in early quantized ONNX runtimes; the natural improvements are **calibration-driven scale inference** and more storage dtypes (INT16/FP16/BF16).
 
 ---
 
@@ -432,26 +438,27 @@ Every test runs under AddressSanitizer + UndefinedBehaviorSanitizer (where avail
 
 Tracing one full inference through every layer:
 
-1. **Load** (`importer/`): `fe_onnx_load` reads the `.onnx`, parses protobuf, builds the `FeGraph` (nodes + tensor registry), topologically sorts it, and copies all weights into the weight arena.
-2. **Plan** (`planner/`): lifetime analysis finds each tensor's first/last use. Greedy assignment overlaps non-conflicting tensors in one activation buffer. The plan reports minimum buffer size and savings.
-3. **Init runtime** (`runtime/`): arenas bind to caller buffers; weight tensors allocate from the weight arena.
-4. **Run** (`runtime/`):
-   - Reset the activation arena.
-   - Bind the input tensor.
-   - Allocate all activation tensors (bump pointer).
-   - For each node in topological order, dispatch to the matching kernel in `ops/` (or `simd/` for the fast matmul), timing each call if profiling.
+1. **Load** (`importer/`): `fe_onnx_load` reads the `.onnx`, parses protobuf, builds the `FeGraph` (nodes + tensor registry), topologically sorts it, validates it, runs `fe_optimize`, and copies all weights into the weight arena.
+2. **Optimize** (`optim/`): `fe_optimize` runs shape-infer → simplify → constant-fold → Conv+BN fusion → CSE → dead-elim over the freshly-built graph (weights already resident in the arena). Folded/fused constants are allocated into the same arena; the engine's `fe_runtime_alloc_weights` skips already-backed weights so they survive runtime init.
+3. **Plan** (`planner/`): lifetime analysis finds each tensor's first/last use. Greedy assignment overlaps non-conflicting tensors in one activation buffer. The plan reports minimum buffer size and savings.
+4. **Init runtime** (`runtime/`): arenas bind to caller buffers; weight tensors allocate from the weight arena; the graph is re-validated.
+5. **Run** (`runtime/`):
+   - First run (or any run whose input shape differs from the last planned one): re-seed the input shape, forget every produced shape, `fe_infer_shapes` re-propagates, `fe_plan_memory` computes a fresh `FePlan`, and `fe_exec_build` resolves each `topo_order` node to a kernel function pointer via the `k_fns[]` table.
+   - Reset the activation arena, `fe_plan_apply` re-assigns the cached byte offsets (data region reserved before `FeTensor` metadata), bind the input tensor (`find_graph_input` — ONNX graphs have no `FE_OP_INPUT` node), allocate a producer-less OUTPUT-node tensor if needed.
+   - Execute the flat `FeExecStep` array — a straight walk of pre-resolved kernel wrappers, no dispatch switch, no lifetime analysis. Each step records its own profiler timing. Nothing is silently skipped — an op with no table entry returns `FE_ERR_SHAPE` loudly at build time.
    - Copy the final output into the caller's buffer.
-5. **(Optional) Quantize** (`quantization/`): convert weights to INT8 to shrink the model and use int8→int32 GEMMs.
-6. **(Optional) Profile** (`tools/`): print per-operator timing to find the hotspot — almost always matmul.
+6. **(Optional) Quantize** (`quantization/`): `fe_quantize_model` converts MATMUL/LINEAR weights to per-channel INT8 in place; subsequent runs route those steps through `fe_linear_int8`/`fe_matmul_int8_dyn` with dynamic INT8 activations. INT8 weights need no re-planning — the exec steps were already resolved, and the wrappers branch on the weight dtype at run time.
+7. **(Optional) Profile** (`tools/`): print per-operator timing to find the hotspot — almost always matmul.
 
 ---
 
 ## Known Limitations
 
-- **Planner not integrated.** `fe_runtime_run` uses the arena directly. `fe_plan_apply` exists but nothing calls it. Wiring it in would give deterministic, minimal activation memory.
-- **Limited opset.** Unsupported ONNX ops are silently skipped. Only models made of supported ops load correctly.
-- **No shape inference.** Shapes must exist in the ONNX file or be filled in by the caller. The importer skips value-info shape data.
-- **Quantization is per-tensor, not per-channel.** Per-channel scales would improve INT8 accuracy.
+- **Planner integrated.** `fe_runtime_run` plans memory and runs off one planned activation buffer; `fe_plan_apply` reserves the data region before arena-allocating `FeTensor` metadata so the two never collide.
+- **Limited opset.** Unsupported ONNX ops fail loudly (`FE_ERR_SHAPE`), never silently drop. The importer maps 20+ op strings (math, activations, pool, norms, conv2d) and reads per-op attributes.
+- **Static execution plan.** `fe_runtime_run` executes a precomputed flat array of kernel function pointers over a cached memory plan. The only per-run analysis is an input-shape comparison; a mismatch triggers a rebuild (re-infer → re-plan → re-resolve steps). Dynamic-batch graphs re-seed their input on every rebuild because shape inference only fills unknown shapes and never shrinks. Steady-state runs do zero re-analysis (`n_plan_builds` stays 1).
+- **Optimization runs at load, once.** `fe_optimize` runs in `fe_onnx_load` and again nowhere; interop with dynamic input shapes is limited to shape inference (dead-elim's live set ignores shapes).
+- **Quantization is per-tensor and per-channel, wired into the engine.** `fe_quantize_model` converts MATMUL/LINEAR weights to INT8 (per-channel scales) and the exec-plan wrappers dispatch dynamically. Scales still come from a single tensor's max, not a calibration set; no calibration pipeline; no INT16/FP16/BF16 storage. Activations are quantized dynamically per run — there is no precomputed activation scale.
 - **AVX2 needs `N % 8 == 0`** for the vectorized path. Remainders fall back to scalar code.
 - **Fixed capacities** (512 nodes / 1024 tensors / 8 dims). Fine for small models; would need dynamic growth for larger ones.
 - **Single-threaded.** No parallel execution across independent subgraphs.

@@ -159,9 +159,25 @@ FeStatus fe_plan_apply(FeGraph *g, FePlan *plan,
                         void *activation_buf, size_t buf_size,
                         FeArena *metadata_arena) {
     if (!g || !plan || !activation_buf || !metadata_arena) return FE_ERR_NULL;
-    if (buf_size < plan->total_activation_bytes) return FE_ERR_NOMEM;
+
+    size_t data_bytes = (size_t)plan->total_activation_bytes;
+    size_t meta_bytes = (size_t)plan->n_lifetimes *
+                        align_up(sizeof(FeTensor), _Alignof(FeTensor));
+    if (buf_size < data_bytes + meta_bytes) return FE_ERR_NOMEM;
 
     unsigned char *base = (unsigned char *)activation_buf;
+
+    /*
+     * Reserve the planned data region up front. The FeTensor metadata
+     * structs are arena-allocated too, and in the runtime the metadata
+     * arena IS the activation buffer — without this reservation the
+     * metadata bump would land on top of the data offsets the planner
+     * carved out (offset 0 when the input tensor has no lifetime),
+     * and kernels writing tensor data would clobber the metadata.
+     */
+    if (data_bytes > 0 && !fe_arena_alloc(metadata_arena, data_bytes,
+                                          PLANNER_ALIGN))
+        return FE_ERR_NOMEM;
 
     for (int i = 0; i < plan->n_lifetimes; i++) {
         int tidx = plan->lifetimes[i].tensor_idx;

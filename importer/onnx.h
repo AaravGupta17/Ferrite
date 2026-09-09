@@ -38,8 +38,11 @@ typedef struct {
 void     fe_pb_init  (FePbReader *r, const unsigned char *data, size_t len);
 int      fe_pb_done  (const FePbReader *r);
 
-/* Read a varint. Returns 0 on buffer exhaustion. */
+/* Read a varint. Returns 0 on buffer exhaustion (or a 10-byte runaway). */
 uint64_t fe_pb_varint(FePbReader *r);
+
+/* Read a raw little-endian fixed32 (wire type 5). Returns 0 if truncated. */
+uint32_t fe_pb_fixed32(FePbReader *r);
 
 /* Read tag: sets *field_number and *wire_type. Returns 0 on exhaustion. */
 int      fe_pb_tag   (FePbReader *r, int *field_number, int *wire_type);
@@ -47,7 +50,7 @@ int      fe_pb_tag   (FePbReader *r, int *field_number, int *wire_type);
 /* Skip a field whose wire type is known. */
 void     fe_pb_skip  (FePbReader *r, int wire_type);
 
-/* Read a length-delimited field into *out_data/*out_len. */
+/* Read a length-delimited field into *out_data, *out_len. */
 int      fe_pb_bytes (FePbReader *r,
                        const unsigned char **out_data, size_t *out_len);
 

@@ -37,14 +37,15 @@ ctest --test-dir build          # all tests, from anywhere
 | `ops/` | Operator kernels: matmul, linear, relu, softmax, bias_add, conv1d (im2col) | `ops.h`, `matmul.c`, `activations.c`, `conv1d.c` |
 | `simd/` | AVX2 tiled matmul with runtime CPUID detection | `matmul_avx2.c/h` |
 | `planner/` | Tensor-lifetime analysis + greedy buffer reuse | `memory_planner.c/h` |
+| `optim/` | Graph optimization passes: shape inference (per-op rule table) | `shape_infer.c/h` |
 | `runtime/` | Execution engine: `FeRuntime` ties graph + arenas + kernels | `engine.c/h` |
 | `importer/` | Hand-rolled ONNX protobuf wire parser and graph loader | `onnx.c/h` |
 | `quantization/` | Symmetric per-tensor INT8 quantization | `quant.c/h` |
-| `tools/` | Profiler, benchmark harnesses | `profiler.c/h`, `bench_matmul.c`, `bench_avx2.c` |
+| `tools/` | Profiler, benchmark harnesses | `profiler.c/h`, `bench.c/h`, `bench_model.c`, `bench_avx2.c` |
 | `tests/` | One test binary per subsystem | `test_*.c`, `tiny_mlp.onnx` |
 | `temps/` | Working docs: guide, roadmap, doc standards, staged plan | `explain.md`, `roadmap.md`, `documentation.md`, `Stage*.md` |
 
-Layer dependencies point downward only: `importer/` → `graph/` → `planner/` → `runtime/` → `ops/` + `simd/` + `core/`. `tools/` and `tests/` sit on top.
+Layer dependencies point downward only: `importer/` → `optim/` + `graph/` → `planner/` → `runtime/` → `ops/` + `simd/` + `core/`. `tools/` and `tests/` sit on top.
 
 ---
 
@@ -53,7 +54,9 @@ Layer dependencies point downward only: `importer/` → `graph/` → `planner/` 
 1. **Load** (`importer/`): `fe_onnx_load` parses the `.onnx` protobuf, builds the `FeGraph` (nodes + tensor registry), runs topo sort, copies weights into the weight arena.
 2. **Plan** (`planner/`): lifetime analysis + greedy reuse produce per-tensor offsets into one activation buffer.
 3. **Init** (`runtime/`): `fe_runtime_init` binds caller buffers to both arenas; `fe_runtime_alloc_weights` allocates weights once.
-4. **Run** (`runtime/`): reset activation arena → bind input → bump-allocate activations → walk `topo_order` dispatching each node to a kernel → copy the output.
+4. **Run** (`runtime/`): first run (or an input-shape change) re-seeds the input, forgets produced shapes, re-infers, re-plans memory, and resolves every node to a kernel fn via the `k_fns[]` table (`fe_exec_build`); then reset activation arena → `fe_plan_apply` re-applies the cached byte offsets (data region reserved first, `FeTensor` metadata appended after it) → bind the graph input tensor to the caller's buffer → walk the flat `FeExecStep` array (no dispatch switch) → copy the output.
+
+Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the hand-built graphs do). `find_graph_input()` (`runtime/engine.c`) binds the input as the first non-weight, consumed-but-unproduced tensor; the output is read from the last node.
 5. **Optional**: quantize weights (`quantization/`), profile per-op (`tools/`).
 
 ---
@@ -86,13 +89,13 @@ Layer dependencies point downward only: `importer/` → `graph/` → `planner/` 
 
 ## Current State and Known Gaps
 
-- **Engine dispatches every `FeOpType`** — basic math, activations, GEMM/transpose, conv2d/pool, norms (including `CONV1D`/`BATCHNORM`), sequence ops (`runtime/engine.c`, `dispatch_node`). Nothing is silently skipped; an unrecognized op returns `FE_ERR_SHAPE` loudly.
-- **AVX2 is wired into dispatch.** `fe_matmul` (`ops/matmul.c`) already routes to `fe_matmul_avx2` behind `fe_cpu_has_avx2()`, with scalar fallback — this is what the engine calls for every `MATMUL`/`LINEAR` node. `tests/test_simd.c` is the regression check (naive vs. AVX2, vectorized and remainder paths); `bench_avx2` is timing only now, not the sole correctness check.
-- **Planner is still standalone.** `fe_plan_apply` exists (`planner/memory_planner.h:67`) but nothing calls it; `fe_runtime_run` allocates activations directly off the arena (`alloc_activations` in `runtime/engine.c`), not through the plan. This is the current real integration gap.
-- **`fe_graph_validate` exists (`graph/graph.h`) but isn't called yet.** Registry integrity, edge-index bounds, and producer-uniqueness checks are implemented and tested (`tests/test_graph.c`); wiring the call into `fe_runtime_init` (right after `fe_graph_topo_sort`) is still open.
-- **Shape inference is a narrow runtime workaround, not a general one.** `runtime/engine.c`'s `infer_shapes()` propagates shapes through the topo order with hardcoded per-op rules for `CONV1D`, `RELU`/`SOFTMAX`/`BATCHNORM`, `ADD`, `FLATTEN`, `MATMUL` — enough for the acousticleaknet demo (`tools/demo_acousticleaknet.c`), but ONNX `value_info` is still ignored, so shapes for other ops (`CONV2D`, `GEMM`, pooling, etc.) aren't inferred generally.
-- **Unsupported ONNX ops are silently skipped** by the importer. Only models built from supported ops load correctly.
-- **Quantization has both per-tensor and per-channel INT8 now** (`quantization/quant.c` — `fe_quantize`/`fe_matmul_int8` per-tensor, `fe_quantize_per_channel`/`fe_matmul_int8_per_channel` per-channel). No calibration pipeline yet — scales come from a single tensor's `max(|x|)`, not from running a calibration set through the float model.
+- **The run loop is a static execution plan** (`runtime/exec_plan.c`, Stage 13). `fe_exec_build` resolves each `topo_order` node to a kernel wrapper via the `k_fns[]` table indexed by `FeOpType` (every op exports one; no entry → loud `FE_ERR_SHAPE` at build, nothing silently skipped). `fe_runtime_run` re-applies the cached memory plan and walks the flat `FeExecStep` array — the only per-run analysis is an input-shape comparison triggering a rare rebuild. `FeRuntime` embeds the `FeExecPlan`.
+- **AVX2 is wired into dispatch.** `fe_matmul` (`ops/matmul.c`) already routes to `fe_matmul_avx2` behind `fe_cpu_has_avx2()`, with scalar fallback — this is what the engine calls for every `MATMUL`/`LINEAR` node. `fe_relu`/`fe_add`/`fe_mul` route to `simd/elementwise_avx2.c` the same way; `fe_gemm` routes its base case (no transpose, `alpha=1`, `beta=0`). `tests/test_simd.c` is the regression check (naive vs. AVX2, vectorized and remainder paths, elementwise equivalence); `bench_avx2` and `bench_model` are timing only, not correctness checks.
+- **Alignment is guaranteed and tested.** Planner data offsets and arena allocations are 64-byte aligned (`tests/test_planner.c` `test_alignment`), so SIMD kernels never hit misaligned loads/stores.
+- **Planner is wired into the runtime.** `fe_runtime_run` executes the static plan: on the first run (or an input shape change) it re-infers shapes and calls `fe_plan_memory`, caching the `FePlan`; per run it resets the arena and calls `fe_plan_apply` to re-assign the cached byte offsets (`runtime/exec_plan.c`). `fe_plan_apply` reserves the planned data region in the arena before arena-allocating the `FeTensor` metadata structs, so metadata never collides with tensor data. `fe_runtime_init` validates the graph (`fe_graph_validate`) right after `fe_graph_topo_sort`. `tests/test_engine.c` asserts the planned buffer is smaller than the naive no-reuse allocation, running off one planned activation buffer, plus an ONNX load→run test (`test_onnx_load_and_run`) and a static-plan test (`test_exec_plan_static` — same-shape reruns do zero re-analysis).
+- **Graph optimization is a wired-in pass pipeline.** `fe_optimize` (`optim/optim.c`) runs shape-infer → simplify (identity transpose/flatten) → constant-fold → Conv+BN fusion → CSE → dead-elim, then re-sorts and re-validates. `fe_onnx_load` runs it after `fe_graph_validate`, so loaded models arrive optimized (e.g. the demo model's Conv+BN pairs fuse away at load — no `BatchNorm` rows left in the profile). Pass math and both refactors are in `tests/test_opt.c`, which also proves output equivalence pre/post optimize through the engine. Conventions: passes rewrite dead producers into `INPUT` feeds (op + zero inputs, outputs kept) and let dead-elim compact; `fe_runtime_alloc_weights` skips already-backed (`e->tensor != NULL`) weights so folded/fused constants survive runtime init.
+- **The importer fails loudly on unsupported ONNX ops** (`FE_ERR_SHAPE` + stderr message) — nothing is silently dropped. It maps 20+ op strings, reads per-op attributes (`alpha`, `epsilon`, `num_groups`, `kernel_shape`, `strides`, `pads`, `num_heads`), applies ONNX defaults, and requires critical inputs/attrs before accepting a node. `Gemm` maps to `Linear` and warns (never guesses) when non-default `transA`/`transB`/`alpha`/`beta` would change the result.
+- **Quantization is per-tensor and per-channel AND wired into the engine** (`quantization/quant.c` — `fe_quantize`/`fe_matmul_int8` per-tensor, `fe_quantize_per_channel`/`fe_matmul_int8_per_channel` per-channel; `fe_quantize_model` repacks 2-D MATMUL/LINEAR weights to per-channel INT8 in place, scales in the weight arena; `ex_matmul`/`ex_linear` branch on the weight dtype at run time to `fe_linear_int8`/`fe_matmul_int8_dyn` with dynamic activations). No calibration pipeline yet — scales come from a single tensor's `max(|x|)`, not from running a calibration set through the float model.
 - **AVX2 vectorized path needs `N % 8 == 0`**; remainders fall back to scalar.
 - **Fixed capacities:** 512 nodes, 1024 tensors, 8 dims.
 - **Single-threaded** execution.

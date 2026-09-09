@@ -118,9 +118,65 @@ static void test_plan_apply(void) {
 
     printf("PASS test_plan_apply\n");
 }
+
+/*
+ * Planner data offsets and arena allocations must be 64-byte aligned —
+ * SIMD kernels (fe_matmul_avx2, fe_relu_avx2) load/store 32-byte (8x4B)
+ * vectors and misaligned stores are a correctness/perf hazard.
+ */
+static void test_alignment(void) {
+    FeGraph g;
+    fe_graph_init(&g);
+
+    /* Chain of several tensors so offsets vary. */
+    int s4[]  = {1, 7};                /* odd sizes -> alignment still held */
+    int s78[] = {7, 9};
+    int s9[]  = {9};
+    int t_in = fe_graph_add_tensor(&g, "input",  DTYPE_FLOAT32, 2, s4,  0);
+    int t_w  = fe_graph_add_tensor(&g, "w",      DTYPE_FLOAT32, 2, s78, 1);
+    int t_b  = fe_graph_add_tensor(&g, "b",      DTYPE_FLOAT32, 1, s9,  1);
+    int t_h  = fe_graph_add_tensor(&g, "h",      DTYPE_FLOAT32, 2, s4,  0);
+    int t_h2 = fe_graph_add_tensor(&g, "h2",     DTYPE_FLOAT32, 2, s4,  0);
+
+    int lin_in[] = {t_in, t_w, t_b}; int lin_out[] = {t_h};
+    int relu_in[] = {t_h};            int relu_out[] = {t_h2};
+    fe_graph_add_node(&g, "input",  FE_OP_INPUT,  NULL,    0, &t_in, 1);
+    fe_graph_add_node(&g, "linear", FE_OP_LINEAR, lin_in,  3, lin_out, 1);
+    fe_graph_add_node(&g, "relu",   FE_OP_RELU,   relu_in, 1, relu_out, 1);
+
+    assert(fe_graph_topo_sort(&g) == FE_OK);
+
+    FePlan plan;
+    assert(fe_plan_memory(&g, &plan) == FE_OK);
+    assert(plan.total_activation_bytes % 64 == 0);
+
+    static unsigned char meta_buf[4096] __attribute__((aligned(64)));
+    FeArena meta_arena;
+    fe_arena_init(&meta_arena, meta_buf, sizeof(meta_buf));
+    static unsigned char act_buf[4096] __attribute__((aligned(64)));
+
+    assert(fe_plan_apply(&g, &plan, act_buf, sizeof(act_buf), &meta_arena)
+           == FE_OK);
+
+    /* Every assigned data pointer must be 64-byte aligned. */
+    for (int i = 0; i < plan.n_lifetimes; i++) {
+        int tidx = plan.lifetimes[i].tensor_idx;
+        uintptr_t ptr = (uintptr_t)g.tensors[tidx].tensor->data;
+        assert(ptr % 64 == 0);
+    }
+
+    /* Arena allocations honour their requested alignment. */
+    void *p16  = fe_arena_alloc(&meta_arena, 16, 64);
+    void *p1   = fe_arena_alloc(&meta_arena, 1,  4);
+    assert((uintptr_t)p16 % 64 == 0);
+    assert((uintptr_t)p1  % 4  == 0);
+
+    printf("PASS test_alignment\n");
+}
 int main(void) {
     test_linear_chain_reuse();
     test_plan_apply();
+    test_alignment();
     printf("\nAll tests passed.\n");
     return 0;
 }

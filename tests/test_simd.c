@@ -9,9 +9,11 @@
 #include <stdio.h>
 #include <assert.h>
 #include <math.h>
+#include <string.h>
 #include "../core/tensor.h"
 #include "../ops/ops.h"
 #include "../simd/matmul_avx2.h"
+#include "../simd/elementwise_avx2.h"
 
 /* Relative + absolute tolerance: AVX2 accumulates in a different order than
  * the scalar triple loop, so bit-exact equality is not the right bar —
@@ -83,6 +85,51 @@ static void test_non_square(void) {
     check_matmul_equivalence(2,   512, 130, 3002);
 }
 
+/*
+ * Elementwise equivalence: the AVX2 kernels must be bit-exact — they do
+ * plain vector add/mul/max with no reordering — across the vectorized path
+ * (n % 8 == 0) and the scalar tail (n % 8 != 0). Drive each op through the
+ * public op (fe_relu/fe_add/fe_mul) so dispatch is covered too, and compare
+ * against the naive computation.
+ */
+static void check_elementwise_equivalence(int n) {
+    float a[64], b[64];
+    for (int i = 0; i < n; i++) {
+        a[i] = (float)((i * 37) % 17) / 4.0f - 2.0f;   /* mixed signs */
+        b[i] = (float)((i * 53) % 11) / 5.0f;
+    }
+
+    int s[] = {1, n};
+    FeTensor *A = fe_tensor_alloc(DTYPE_FLOAT32, 2, s);
+    FeTensor *B = fe_tensor_alloc(DTYPE_FLOAT32, 2, s);
+    FeTensor *O = fe_tensor_alloc(DTYPE_FLOAT32, 2, s);
+    assert(A && B && O);
+    memcpy(A->data, a, n * sizeof(float));
+    memcpy(B->data, b, n * sizeof(float));
+
+    assert(fe_add(A, B, O) == FE_OK);
+    for (int i = 0; i < n; i++) assert(((float *)O->data)[i] == a[i] + b[i]);
+
+    assert(fe_mul(A, B, O) == FE_OK);
+    for (int i = 0; i < n; i++) assert(((float *)O->data)[i] == a[i] * b[i]);
+
+    assert(fe_relu(A, O) == FE_OK);
+    for (int i = 0; i < n; i++)
+        assert(((float *)O->data)[i] == (a[i] > 0.0f ? a[i] : 0.0f));
+
+    fe_tensor_free(A);
+    fe_tensor_free(B);
+    fe_tensor_free(O);
+    printf("PASS elementwise_equivalence n=%d\n", n);
+}
+
+static void test_elementwise_paths(void) {
+    check_elementwise_equivalence(8);     /* vectorized only */
+    check_elementwise_equivalence(13);    /* vectorized + tail */
+    check_elementwise_equivalence(1);     /* tail only */
+    check_elementwise_equivalence(64);    /* several full vectors */
+}
+
 int main(void) {
     if (!fe_cpu_has_avx2()) {
         printf("AVX2 not available on this CPU — skipping (not a failure)\n");
@@ -92,6 +139,7 @@ int main(void) {
     test_vectorized_sizes();
     test_remainder_sizes();
     test_non_square();
+    test_elementwise_paths();
 
     printf("\nAll tests passed.\n");
     return 0;
