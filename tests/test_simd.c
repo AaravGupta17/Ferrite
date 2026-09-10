@@ -14,6 +14,7 @@
 #include "../ops/ops.h"
 #include "../simd/matmul_avx2.h"
 #include "../simd/elementwise_avx2.h"
+#include "../simd/backend.h"
 
 /* Relative + absolute tolerance: AVX2 accumulates in a different order than
  * the scalar triple loop, so bit-exact equality is not the right bar —
@@ -77,12 +78,18 @@ static void test_remainder_sizes(void) {
     check_matmul_equivalence(5,   7,   13,  2001);
     check_matmul_equivalence(17,  33,  99,  2002);
     check_matmul_equivalence(1,   4,   3,   2003);   /* 1x1 output edge case */
+
+    /* Remainder columns crossing the KC tile boundary (KC = 256): the
+     * remainder tail must accumulate correctly across every kc tile. */
+    check_matmul_equivalence(9,   513, 205, 2004);
+    check_matmul_equivalence(12,  300, 14,  2005);
 }
 
 static void test_non_square(void) {
     /* Tall and wide shapes, mixed vectorized/remainder N. */
     check_matmul_equivalence(128, 8,   8,   3001);
     check_matmul_equivalence(2,   512, 130, 3002);
+    check_matmul_equivalence(70,  1025, 23,  3003);  /* MC + KC + NR remainders */
 }
 
 /*
@@ -130,12 +137,31 @@ static void test_elementwise_paths(void) {
     check_elementwise_equivalence(64);    /* several full vectors */
 }
 
+/* The generalized dispatch table (Section 2.5): at runtime fe_simd_ops()
+ * must select AVX2 when the CPU has it, and the scalar table always exists
+ * with NULL slot pointers that ops/ resolves to their own scalar loops. */
+static void test_dispatch_table(void) {
+    assert(fe_simd_ops() != NULL);
+    assert(fe_simd_backend() == FE_SIMD_AVX2 ||
+           fe_simd_backend() == FE_SIMD_SCALAR);
+
+    if (fe_cpu_has_avx2()) {
+        assert(fe_simd_backend() == FE_SIMD_AVX2);
+        assert(fe_simd_ops()->matmul != NULL);
+        assert(fe_simd_ops()->relu   != NULL);
+    } else {
+        assert(fe_simd_backend() == FE_SIMD_SCALAR);
+    }
+    printf("PASS dispatch_table backend=%d\n", (int)fe_simd_backend());
+}
+
 int main(void) {
     if (!fe_cpu_has_avx2()) {
         printf("AVX2 not available on this CPU — skipping (not a failure)\n");
         return 0;
     }
 
+    test_dispatch_table();
     test_vectorized_sizes();
     test_remainder_sizes();
     test_non_square();

@@ -1,7 +1,6 @@
 /* ops/elementwise.c (new file) */
 #include "ops.h"
-#include "matmul_avx2.h"
-#include "elementwise_avx2.h"
+#include "backend.h"
 #include <string.h>
 
 typedef enum { OP_ADD, OP_SUB, OP_MUL, OP_DIV } ElemOp;
@@ -22,21 +21,16 @@ static FeStatus elementwise_binary(const FeTensor *a, const FeTensor *b,
     const float *pb = (const float *)b->data;
     float       *po = (float *)out->data;
 
+    const FeSimdOps *ops = fe_simd_ops();
     switch (op) {
         case OP_ADD:
-            if (fe_cpu_has_avx2()) {
-                fe_add_avx2(pa, pb, po, n);
-            } else {
-                for (int i = 0; i < n; i++) po[i] = pa[i] + pb[i];
-            }
+            if (ops->add) ops->add(pa, pb, po, n);
+            else          for (int i = 0; i < n; i++) po[i] = pa[i] + pb[i];
             break;
         case OP_SUB: for (int i = 0; i < n; i++) po[i] = pa[i] - pb[i]; break;
         case OP_MUL:
-            if (fe_cpu_has_avx2()) {
-                fe_mul_avx2(pa, pb, po, n);
-            } else {
-                for (int i = 0; i < n; i++) po[i] = pa[i] * pb[i];
-            }
+            if (ops->mul) ops->mul(pa, pb, po, n);
+            else          for (int i = 0; i < n; i++) po[i] = pa[i] * pb[i];
             break;
         case OP_DIV: for (int i = 0; i < n; i++) po[i] = pa[i] / pb[i]; break;
     }

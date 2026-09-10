@@ -1,0 +1,40 @@
+// simd/backend.h — generalized SIMD dispatch (Section 2.5).
+//
+// Every op-family's SIMD path resolves through one table: buffer-level
+// kernels for relu/add/mul, tensor-level for matmul (which returns an
+// FeStatus so a failed vector path can fall back to the reference scalar
+// kernel in ops/). The active backend is decided once by fe_simd_backend()
+// (CPUID / compile-time constant) and cached; a NEON or scalar-only backend
+// replaces simd/backend.c — or scalar.c below — without touching ops/.
+#ifndef FERRITE_SIMD_BACKEND_H
+#define FERRITE_SIMD_BACKEND_H
+
+#include "types.h"
+#include "tensor.h"
+
+typedef enum {
+    FE_SIMD_SCALAR = 0,   /* reference/portable kernels everywhere        */
+    FE_SIMD_AVX2,         /* x86-64 AVX2 + FMA, CPUID-gated               */
+    FE_SIMD_NEON          /* ARM NEON (reserved, Section 4.1)             */
+} FeSimdBackend;
+
+/* One dispatch table per op family. `matmul` validates and runs the fast
+ * kernel; callers fall back to fe_matmul_scalar when it returns non-FE_OK.
+ * The buffer-level kernels are hot path — callers already validated. */
+typedef struct {
+    FeStatus (*matmul)(const FeTensor *A, const FeTensor *B, FeTensor *C);
+    void (*relu)(const float *in, float *out, int n);
+    void (*add) (const float *a, const float *b, float *out, int n);
+    void (*mul) (const float *a, const float *b, float *out, int n);
+} FeSimdOps;
+
+/* Active backend for this CPU/build, selected once and cached. */
+FeSimdBackend fe_simd_backend(void);
+
+/* The active table. Never NULL. */
+const FeSimdOps *fe_simd_ops(void);
+
+/* The scalar-only table (simd/scalar.c), for fallback and scalar builds. */
+const FeSimdOps *fe_simd_scalar_ops(void);
+
+#endif /* FERRITE_SIMD_BACKEND_H */

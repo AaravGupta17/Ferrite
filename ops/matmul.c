@@ -1,6 +1,6 @@
 // ops/matmul.c
 #include "ops.h"
-#include "matmul_avx2.h"
+#include "backend.h"
 #include <string.h>
 #include <assert.h>
 
@@ -64,16 +64,18 @@ FeStatus fe_matmul_scalar(const FeTensor *A, const FeTensor *B, FeTensor *C) {
 /*
  * Public entry point: C = A @ B
  *
- * Dispatches to the AVX2 kernel when the CPU supports it, falling
- * back to the scalar reference implementation otherwise — either on
- * unsupported hardware, or if the AVX2 path returns anything other
- * than FE_OK.
+ * Dispatches through the SIMD backend table (simd/backend.h): the active
+ * backend's matmul kernel runs when present, falling back to the scalar
+ * reference implementation either on a scalar-only build or if the vector
+ * path returns anything other than FE_OK. New backends (NEON) slot in via
+ * the table without touching ops/.
  */
 FeStatus fe_matmul(const FeTensor *A, const FeTensor *B, FeTensor *C) {
-    if (fe_cpu_has_avx2()) {
-        FeStatus s = fe_matmul_avx2(A, B, C);
+    const FeSimdOps *ops = fe_simd_ops();
+    if (ops->matmul) {
+        FeStatus s = ops->matmul(A, B, C);
         if (s == FE_OK) return s;
-        /* fall through to scalar on any AVX2-path failure */
+        /* fall through to scalar on any vector-path failure */
     }
     return fe_matmul_scalar(A, B, C);
 }

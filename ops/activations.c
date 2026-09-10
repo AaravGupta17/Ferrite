@@ -1,7 +1,6 @@
 // ops/activations.c
 #include "ops.h"
-#include "matmul_avx2.h"
-#include "elementwise_avx2.h"
+#include "backend.h"
 #include <math.h>
 #include <string.h>
 #include <assert.h>
@@ -17,8 +16,9 @@ FeStatus fe_relu(const FeTensor *in, FeTensor *out) {
     const float *src = (const float *)in->data;
     float       *dst = (float *)out->data;
 
-    if (fe_cpu_has_avx2()) {
-        fe_relu_avx2(src, dst, n);
+    const FeSimdOps *ops = fe_simd_ops();
+    if (ops->relu) {
+        ops->relu(src, dst, n);
         return FE_OK;
     }
 
