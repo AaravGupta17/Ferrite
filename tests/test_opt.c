@@ -41,7 +41,7 @@ static void test_conv1d_chain(void) {
     fe_graph_add_node(&g, "input",  FE_OP_INPUT,  NULL, 0, &t_in, 1);
     int c1 = fe_graph_add_node(&g, "conv1", FE_OP_CONV1D,   a1_in, 2, a1_out, 1);
     int c2 = fe_graph_add_node(&g, "relu",  FE_OP_RELU,     a2_in, 1, a2_out, 1);
-    int c3 = fe_graph_add_node(&g, "flat",  FE_OP_FLATTEN,  a3_in, 2, a3_out, 1);
+    int c3 = fe_graph_add_node(&g, "flat",  FE_OP_FLATTEN,  a3_in, 1, a3_out, 1);
     int c4 = fe_graph_add_node(&g, "mm",    FE_OP_MATMUL,   a4_in, 2, a4_out, 1);
     int c5 = fe_graph_add_node(&g, "sm",    FE_OP_SOFTMAX,  a5_in, 1, a5_out, 1);
 

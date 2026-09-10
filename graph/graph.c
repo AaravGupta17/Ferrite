@@ -21,7 +21,7 @@ int fe_graph_add_tensor(FeGraph *g, const char *name,
     e->tensor    = NULL;
     e->scales    = NULL;
     e->n_scales  = 0;
-    memcpy(e->shape, shape, ndim * sizeof(int));
+    if (ndim > 0) memcpy(e->shape, shape, ndim * sizeof(int));
 
     return g->n_tensors++;
 }

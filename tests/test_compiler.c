@@ -113,9 +113,21 @@ static void test_compiler_matches_engine(void) {
     FeTensor *out_ir = fe_tensor_alloc(DTYPE_FLOAT32, 2, s_out);
     ctx.output = out_ir;
 
+    /* Identify the graph input tensor — fe_ir_run's INPUT instruction
+     * overwrites c->tensors[dst] with c->input, so allocating separately
+     * would leak. */
+    int input_idx = -1;
+    for (int i = 0; i < g.n_nodes; i++)
+        if (g.nodes[i].op == FE_OP_INPUT && g.nodes[i].n_outputs > 0) {
+            input_idx = g.nodes[i].outputs[0];
+            break;
+        }
+
     for (int t = 0; t < g.n_tensors; t++) {
         FeTensorEntry *e = &g.tensors[t];
-        if (e->is_weight && e->tensor) {
+        if (t == input_idx) {
+            live[t] = in;                 /* reuse caller-provided input */
+        } else if (e->is_weight && e->tensor) {
             live[t] = e->tensor;          /* reuse engine-backed weights */
         } else {
             live[t] = fe_tensor_alloc(e->dtype, e->ndim, e->shape);
