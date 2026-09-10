@@ -18,12 +18,14 @@ This guide explains each subsystem, how they connect, and how data flows through
 6. [SIMD Matmul (`simd/`)](#simd-matmul)
 7. [Memory Planner (`planner/`)](#memory-planner)
 8. [Execution Engine (`runtime/`)](#execution-engine)
-9. [ONNX Importer (`importer/`)](#onnx-importer)
-10. [Quantization (`quantization/`)](#quantization)
-11. [Profiling and Benchmarks (`tools/`)](#profiling-and-benchmarks)
-12. [Tests and Build System](#tests-and-build-system)
-13. [End-to-End Data Flow](#end-to-end-data-flow)
-14. [Known Limitations](#known-limitations)
+9. [Parallel Execution (`parallel/`)](#parallel-execution)
+10. [Compiler IR (`compiler/`)](#compiler-ir)
+11. [ONNX Importer (`importer/`)](#onnx-importer)
+12. [Quantization (`quantization/`)](#quantization)
+13. [Profiling and Benchmarks (`tools/`)](#profiling-and-benchmarks)
+14. [Tests and Build System](#tests-and-build-system)
+15. [End-to-End Data Flow](#end-to-end-data-flow)
+16. [Known Limitations](#known-limitations)
 
 ---
 
@@ -42,6 +44,11 @@ This guide explains each subsystem, how they connect, and how data flows through
 │          FeGraph: nodes + tensor registry                   │
 │          topological sort (Kahn's algorithm)                │
 └───────────────────────────┬─────────────────────────────────┘
+                            │ lowers
+┌───────────────────────────▼─────────────────────────────────┐
+│                  compiler/  (linear IR)                     │
+│        lowering, dead-elim, kernel table, scheduling        │
+└───────────────────────────┬─────────────────────────────────┘
                             │ analyzes
 ┌───────────────────────────▼─────────────────────────────────┐
 │                    planner/  (memory)                       │
@@ -49,12 +56,17 @@ This guide explains each subsystem, how they connect, and how data flows through
 └───────────────────────────┬─────────────────────────────────┘
                             │ executes
 ┌───────────────────────────▼─────────────────────────────────┐
+│                  parallel/  (pool + scheduler)              │
+│        thread pool, row-parallel GEMM, DAG scheduler        │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ dispatches
+┌───────────────────────────▼─────────────────────────────────┐
 │                     runtime/  (engine)                      │
 │        dispatches nodes to kernels in topo order            │
 └───────────────────────────┬─────────────────────────────────┘
                             │ calls
 ┌───────────────────────────▼─────────────────────────────────┐
-│    ops/  +  simd/          core/  (tensors, arenas)         │
+│    ops/  +  simd/          core/  (tensors, arenas, fp16)   │
 │    kernels                 universal data structures        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -77,9 +89,12 @@ This guide explains each subsystem, how they connect, and how data flows through
 
 The foundation everything uses:
 
-- `FeDtype` — `DTYPE_FLOAT32` (0), `DTYPE_INT8` (1), `DTYPE_INT32` (2).
+- `FeDtype` — `DTYPE_FLOAT32` (0), `DTYPE_INT8` (1), `DTYPE_INT32` (2),
+  `DTYPE_FLOAT64` (3), `DTYPE_FLOAT16` (4, **storage only** — compute happens
+  after an FP32 upconvert), `DTYPE_INT16` (5, INT16 dynamic-quant path),
+  `DTYPE_BFLOAT16` (6, **storage only** — compute happens after an FP32 upconvert).
 - `FeStatus` — error codes: `FE_OK` and `FE_ERR_NULL/SHAPE/DTYPE/NOMEM/BOUNDS`.
-- `fe_dtype_size()` — inline helper, bytes per element (4/1/4).
+- `fe_dtype_size()` — inline helper, bytes per element (4/1/4/8/2/2/2).
 - `FERRITE_MAX_DIMS` — 8, the maximum tensor rank.
 
 ### `core/tensor.h` / `core/tensor.c` — `FeTensor`
@@ -141,6 +156,15 @@ magic "FETN" | u32 version | u32 dtype | u32 ndim | int32 shape[ndim]
 - Loading always produces a fresh **owning, row-major tensor** (`owns_data = true`), freed with `fe_tensor_free()`.
 - Readers are strict for v1: wrong magic, newer version, unknown dtype, impossible shape, a `data_len` that disagrees with the computed byte count, truncated payloads, and trailing garbage all fail loudly — `FE_ERR_IO` for structural corruption, `FE_ERR_DTYPE`/`FE_ERR_SHAPE` where the field names the problem. No partial state leaks: the output pointer is untouched on failure.
 - Versioning starts at 1 on purpose: readers reject `version > 1`, so v2 can change the layout without old builds misreading it.
+
+### `core/fp16.h` / `core/fp16.c` — half-precision (FP16 + BF16) storage
+
+**Bottom line.** Half-precision formats are **storage formats**, not compute formats: FP16 (binary16) and BF16 weights halve RAM, and every access upconverts to FP32 before touching a kernel.
+
+- `fe_f32_to_fp16(f)` / `fe_fp16_to_f32(h)` — bit-level conversion with round-to-nearest-even. Exact for the representable range, saturates to ±Inf on overflow, and correct for subnormals and NaN.
+- `fe_f32_to_bf16(f)` / `fe_bf16_to_f32(b)` — BF16 keeps the FP32 exponent and the top 8 mantissa bits (RNE on the discarded low bits); overflow stays Inf.
+- `fe_f32_to_fp16_buf` / `fe_fp16_to_f32_buf` and `fe_f32_to_bf16_buf` / `fe_bf16_to_f32_buf` — bulk conversions, position matched.
+- `DTYPE_FLOAT16` (4) and `DTYPE_BFLOAT16` (6) each size to 2 bytes in `fe_dtype_size()`. `tests/test_tensor.c` pins known bit patterns (FP16: 1.0 → 0x3C00, −2.0 → 0xC000 … plus a ≤2⁻¹⁰ sweep; BF16: 1.0 → 0x3F80, π → 0x4049 … plus a ≤2⁻⁸ sweep).
 
 ---
 
@@ -318,6 +342,64 @@ typedef struct FeRuntime {
 
 ---
 
+## Parallel Execution
+
+### `parallel/threadpool.h` / `parallel/threadpool.c`
+
+**Bottom line.** A small mutex+condvar FIFO worker pool with `fe_cpu_count()` (returns 1 when the caller hasn't called `fe_threadpool_init`).
+
+- `fe_threadpool_init` — spawn N workers.
+- `fe_threadpool_submit` — enqueue a job `{fn, arg}`; a worker drains FIFOs to completion.
+- `fe_threadpool_wait` — block until every submitted job has run.
+
+### `parallel/parallel_gemm.h` / `parallel/parallel_gemm.c`
+
+**Bottom line.** Row-split matmul: `fe_matmul_parallel(A, B, C, pool, nchunks)` partitions the M dimension across workers.
+
+- Chunk boundaries are derived deterministically from the chunk index, so each worker writes its own C rows with **no shared mutable context** — there is no accumulator race.
+- With 1 chunk the function degenerates to the plain `fe_matmul`, so `tests/test_parallel.c` compares the parallel path against the sequential oracle (M=37 K=17 N=23, max err ~9.5e-7).
+
+### `parallel/scheduler.h` / `parallel/scheduler.c`
+
+**Bottom line.** A ready-set DAG scheduler: `fe_graph_schedule(g, pool, ...)` walks the topo order honoring producer-before-consumer and dispatches ready work.
+
+- In pool mode the worker that runs a node **resubmits that node's children** directly to the pool, so one `fe_threadpool_wait` covers the whole cascade — no shared ready queue, no spin-wait.
+- `tests/test_parallel.c:test_scheduler_causal_order` builds a diamond DAG and asserts every consumer runs strictly after its producers, in both sequential and pool modes.
+
+---
+
+## Compiler IR
+
+### `compiler/ir.h` — the linear IR
+
+**Bottom line.** Stage 14 flattens the graph into a straight-line IR (`FeIrProgram`) decoupled from the engine: lower → optimize → schedule → select kernels → run. The IR is intentionally minimal — one instruction per graph node — and exists as a clean seam for future passes (fusion, allocation, threading).
+
+```c
+typedef enum { IR_INPUT, IR_OUTPUT, IR_MATMUL, IR_LINEAR, IR_RELU,
+               IR_ADD, IR_SOFTMAX, IR_CONV1D, IR_BATCHNORM, IR_NONE } FeIrOp;
+
+typedef struct {
+    FeIrOp  op;
+    int     node;        /* source graph node (for attrs: stride, pad, eps) */
+    int     dst;
+    int     srcs[FE_MAX_NODE_INPUTS];
+    int     n_srcs;
+    int     dead;        /* dead-elim flag */
+} FeIrInstr;
+```
+
+### `compiler/lower.c`, `compiler/codegen.c`, `compiler/schedule.c`
+
+- **`fe_ir_lower(g, &p)`** — maps every `FeOpType` to an `FeIrOp`, records io_in/io_out using the engine's binding rules. Fails loudly on an unmapped op.
+- **`fe_ir_dead_elim`** — mark-and-sweep: any dst that is neither an instruction source nor the program output is dead and compacted away (guarded against `dst == -1` on `IR_OUTPUT`).
+- **`fe_ir_codegen`** — fills a static `FeIrKernel` table (one wrapper per op, `op`-indexed); every entry must resolve or codegen fails. Wrappers pull per-node attributes (conv1d stride/pad, batchnorm eps) from `ctx.g->nodes[node].attrs`.
+- **`fe_ir_schedule`** — producers-before-consumers with a tiny defuse heuristic: among ready instructions, prefer the one sharing a source tensor with the previously scheduled instruction (cache/arena locality). Deterministic, quadratic, bounded by `FE_MAX_NODES`.
+- **`fe_ir_run`** — executes the instruction stream against a caller-bound `FeIrCtx {tensors, input, output}`, in *lowered* order (the schedule is the testable seam).
+
+`tests/test_compiler.c` proves the pipeline end-to-end: the two-layer MLP compiled through `fe_ir_run` matches `fe_runtime_run` bit-for-bit within `1e-5`, dead-elim removes an unconnected node, and the diamond schedule is causally valid.
+
+---
+
 ## ONNX Importer
 
 ### `importer/onnx.h` / `importer/onnx.c`
@@ -363,6 +445,14 @@ After parsing, the graph is topologically sorted and validated before returning 
 **Engine integration.** `ex_matmul`/`ex_linear` in `runtime/exec_plan.c` branch on the weight tensor's dtype per node: INT8 → `fe_linear_int8`/`fe_matmul_int8_dyn` (scales read from the graph entry), float → the scalar/AVX2 float path. A model can mix float and quantized linear layers; quantization is a load-time choice (`fe_quantize_model` after load/runtime-init), not a compile-time flag.
 
 This is the classic symmetric INT8 scheme used in early quantized ONNX runtimes; the natural improvements are **calibration-driven scale inference** and more storage dtypes (INT16/FP16/BF16).
+
+**Calibration pipeline.** `fe_runtime_calibrate` (`runtime/engine.c`) runs a caller-provided sample set through `fe_runtime_run` and records, for every non-weight float tensor (inputs and activations), the maximum |x| observed across the samples into a `graph->n_tensors`-entry `ranges` array. It is the data-collection half of calibration: the ranges are what a static-activation-scale build consumes (the engine today quantizes activations dynamically per run). No percentile/stat-smoothing pass over the observed ranges exists yet.
+
+**INT16, FP16 and BF16 paths.** All are seeded, tested, and API-complete but not wired into the engine dispatch (INT8 remains the engine path):
+
+- `fe_quantize_int16` — symmetric per-tensor INT16 quantization (`scale = max|x|/32767`).
+- `fe_matmul_int16_dyn` / `fe_linear_int16` — dynamic-activation-quant INT16 GEMM/Linear with per-channel weights, mirroring the INT8 engine kernels.
+- `fe_f32_to_fp16`/`fe_fp16_to_f32`, `fe_f32_to_bf16`/`fe_bf16_to_f32`, and `DTYPE_FLOAT16`/`DTYPE_BFLOAT16` — storage-only half precision (see the `core/` section). An INT16/half model-level repack (`fe_quantize_model` analog) and engine dispatch wiring are the next steps.
 
 ---
 
@@ -420,7 +510,9 @@ A Unix-oriented `Makefile` with equivalent targets is kept for WSL during the tr
 | `test_profiler` | timing/recording |
 | `test_quant` | INT8 quantization round-trip |
 | `test_tensor_ser` | serialization round-trips + corruption rejection |
-| `bench_matmul` / `bench_matmul_avx2` / `bench_avx2` | performance measurements |
+| `test_parallel` | thread-pool partition, parallel GEMM vs oracle, scheduler causal order |
+| `test_compiler` | IR lowering, dead-elim, kernel selection, IR output == engine output, schedule validity |
+| `bench_matmul` / `bench_matmul_avx2` / `bench_avx2` / `bench_model` | performance measurements (Debug and Release; see `temps/bench_results.md`) |
 
 Build flags:
 
@@ -458,7 +550,7 @@ Tracing one full inference through every layer:
 - **Limited opset.** Unsupported ONNX ops fail loudly (`FE_ERR_SHAPE`), never silently drop. The importer maps 20+ op strings (math, activations, pool, norms, conv2d) and reads per-op attributes.
 - **Static execution plan.** `fe_runtime_run` executes a precomputed flat array of kernel function pointers over a cached memory plan. The only per-run analysis is an input-shape comparison; a mismatch triggers a rebuild (re-infer → re-plan → re-resolve steps). Dynamic-batch graphs re-seed their input on every rebuild because shape inference only fills unknown shapes and never shrinks. Steady-state runs do zero re-analysis (`n_plan_builds` stays 1).
 - **Optimization runs at load, once.** `fe_optimize` runs in `fe_onnx_load` and again nowhere; interop with dynamic input shapes is limited to shape inference (dead-elim's live set ignores shapes).
-- **Quantization is per-tensor and per-channel, wired into the engine.** `fe_quantize_model` converts MATMUL/LINEAR weights to INT8 (per-channel scales) and the exec-plan wrappers dispatch dynamically. Scales still come from a single tensor's max, not a calibration set; no calibration pipeline; no INT16/FP16/BF16 storage. Activations are quantized dynamically per run — there is no precomputed activation scale.
+- **Quantization is per-tensor and per-channel, wired into the engine.** `fe_quantize_model` converts MATMUL/LINEAR weights to INT8 (per-channel scales) and the exec-plan wrappers dispatch dynamically. Scales still come from a single tensor's max, not a calibration set; no calibration pipeline. INT16 and FP16 are API-complete (`fe_quantize_int16`/`fe_matmul_int16_dyn`/`fe_linear_int16`, `core/fp16.h`) but not wired into engine dispatch. Activations are quantized dynamically per run — there is no precomputed activation scale.
 - **AVX2 needs `N % 8 == 0`** for the vectorized path. Remainders fall back to scalar code.
 - **Fixed capacities** (512 nodes / 1024 tensors / 8 dims). Fine for small models; would need dynamic growth for larger ones.
-- **Single-threaded.** No parallel execution across independent subgraphs.
+- **Parallelism is opt-in, not in the engine hot path.** The thread pool, row-parallel GEMM, and DAG scheduler live in `parallel/` with their own tests; `fe_runtime_run` remains single-threaded unless a caller routes work through the pool explicitly.

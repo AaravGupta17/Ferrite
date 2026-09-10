@@ -32,20 +32,22 @@ ctest --test-dir build          # all tests, from anywhere
 
 | Directory | Role | Key files |
 |---|---|---|
-| `core/` | Universal data structures: strided tensors, arena allocator, serialization, logging, shared types | `types.h`, `tensor.c/h`, `tensor_ser.c/h`, `allocator.c/h`, `log.c/h` |
+| `core/` | Universal data structures: strided tensors, arena allocator, serialization, logging, FP16 storage, shared types | `types.h`, `tensor.c/h`, `tensor_ser.c/h`, `allocator.c/h`, `log.c/h`, `fp16.c/h` |
 | `graph/` | Computation-graph IR, tensor registry, Kahn topological sort | `graph.c/h` |
 | `ops/` | Operator kernels: matmul, linear, relu, softmax, bias_add, conv1d (im2col) | `ops.h`, `matmul.c`, `activations.c`, `conv1d.c` |
-| `simd/` | AVX2 tiled matmul with runtime CPUID detection | `matmul_avx2.c/h` |
+| `simd/` | AVX2 tiled matmul with runtime CPUID detection | `matmul_avx2.c/h`, `elementwise_avx2.c/h` |
 | `planner/` | Tensor-lifetime analysis + greedy buffer reuse | `memory_planner.c/h` |
-| `optim/` | Graph optimization passes: shape inference (per-op rule table) | `shape_infer.c/h` |
-| `runtime/` | Execution engine: `FeRuntime` ties graph + arenas + kernels | `engine.c/h` |
+| `parallel/` | Thread pool, row-parallel GEMM, ready-set DAG scheduler | `threadpool.c/h`, `parallel_gemm.c/h`, `scheduler.c/h` |
+| `compiler/` | Linear IR (lower → dead-elim → kernel table → schedule, `fe_ir_run`) | `ir.h`, `lower.c`, `codegen.c`, `schedule.c` |
+| `optim/` | Graph optimization passes: shape inference (per-op rule table), folding, fusion, CSE, DCE | `shape_infer.c/h`, `optim.c/h` |
+| `runtime/` | Execution engine: `FeRuntime` ties graph + arenas + kernels; static exec plan | `engine.c/h`, `exec_plan.c/h` |
 | `importer/` | Hand-rolled ONNX protobuf wire parser and graph loader | `onnx.c/h` |
-| `quantization/` | Symmetric per-tensor INT8 quantization | `quant.c/h` |
+| `quantization/` | Symmetric INT8 (engine-wired) + INT16 dynamic-quant paths | `quant.c/h` |
 | `tools/` | Profiler, benchmark harnesses | `profiler.c/h`, `bench.c/h`, `bench_model.c`, `bench_avx2.c` |
 | `tests/` | One test binary per subsystem | `test_*.c`, `tiny_mlp.onnx` |
-| `temps/` | Working docs: guide, roadmap, doc standards, staged plan | `explain.md`, `roadmap.md`, `documentation.md`, `Stage*.md` |
+| `temps/` | Working docs: guide, roadmap, doc standards, staged plan, benchmark results | `explain.md`, `roadmap.md`, `documentation.md`, `Stage*.md`, `bench_results.md` |
 
-Layer dependencies point downward only: `importer/` → `optim/` + `graph/` → `planner/` → `runtime/` → `ops/` + `simd/` + `core/`. `tools/` and `tests/` sit on top.
+Layer dependencies point downward only: `importer/` → `optim/` + `graph/` → `compiler/` (on graph/ops/core) → `planner/` → `parallel/` → `runtime/` → `ops/` + `simd/` + `core/`. `tools/` and `tests/` sit on top.
 
 ---
 
@@ -95,10 +97,12 @@ Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the han
 - **Planner is wired into the runtime.** `fe_runtime_run` executes the static plan: on the first run (or an input shape change) it re-infers shapes and calls `fe_plan_memory`, caching the `FePlan`; per run it resets the arena and calls `fe_plan_apply` to re-assign the cached byte offsets (`runtime/exec_plan.c`). `fe_plan_apply` reserves the planned data region in the arena before arena-allocating the `FeTensor` metadata structs, so metadata never collides with tensor data. `fe_runtime_init` validates the graph (`fe_graph_validate`) right after `fe_graph_topo_sort`. `tests/test_engine.c` asserts the planned buffer is smaller than the naive no-reuse allocation, running off one planned activation buffer, plus an ONNX load→run test (`test_onnx_load_and_run`) and a static-plan test (`test_exec_plan_static` — same-shape reruns do zero re-analysis).
 - **Graph optimization is a wired-in pass pipeline.** `fe_optimize` (`optim/optim.c`) runs shape-infer → simplify (identity transpose/flatten) → constant-fold → Conv+BN fusion → CSE → dead-elim, then re-sorts and re-validates. `fe_onnx_load` runs it after `fe_graph_validate`, so loaded models arrive optimized (e.g. the demo model's Conv+BN pairs fuse away at load — no `BatchNorm` rows left in the profile). Pass math and both refactors are in `tests/test_opt.c`, which also proves output equivalence pre/post optimize through the engine. Conventions: passes rewrite dead producers into `INPUT` feeds (op + zero inputs, outputs kept) and let dead-elim compact; `fe_runtime_alloc_weights` skips already-backed (`e->tensor != NULL`) weights so folded/fused constants survive runtime init.
 - **The importer fails loudly on unsupported ONNX ops** (`FE_ERR_SHAPE` + stderr message) — nothing is silently dropped. It maps 20+ op strings, reads per-op attributes (`alpha`, `epsilon`, `num_groups`, `kernel_shape`, `strides`, `pads`, `num_heads`), applies ONNX defaults, and requires critical inputs/attrs before accepting a node. `Gemm` maps to `Linear` and warns (never guesses) when non-default `transA`/`transB`/`alpha`/`beta` would change the result.
-- **Quantization is per-tensor and per-channel AND wired into the engine** (`quantization/quant.c` — `fe_quantize`/`fe_matmul_int8` per-tensor, `fe_quantize_per_channel`/`fe_matmul_int8_per_channel` per-channel; `fe_quantize_model` repacks 2-D MATMUL/LINEAR weights to per-channel INT8 in place, scales in the weight arena; `ex_matmul`/`ex_linear` branch on the weight dtype at run time to `fe_linear_int8`/`fe_matmul_int8_dyn` with dynamic activations). No calibration pipeline yet — scales come from a single tensor's `max(|x|)`, not from running a calibration set through the float model.
+- **Quantization is per-tensor and per-channel AND wired into the engine** (`quantization/quant.c` — `fe_quantize`/`fe_matmul_int8` per-tensor, `fe_quantize_per_channel`/`fe_matmul_int8_per_channel` per-channel; `fe_quantize_model` repacks 2-D MATMUL/LINEAR weights to per-channel INT8 in place, scales in the weight arena; `ex_matmul`/`ex_linear` branch on the weight dtype at run time to `fe_linear_int8`/`fe_matmul_int8_dyn` with dynamic activations). A calibration pipeline exists (`fe_runtime_calibrate`, `runtime/engine.c`) — it runs a sample set through `fe_runtime_run` and records per-tensor activation `max(|x|)` ranges; percentile/stat smoothing and static activation scales consumed by the engine are not built yet.
+- **INT16, FP16 and BF16 are seeded and API-complete but not engine-wired.** `fe_quantize_int16`/`fe_matmul_int16_dyn`/`fe_linear_int16` mirror the INT8 engine kernels (dynamic activations, per-channel weights); `core/fp16.c/h` adds `DTYPE_FLOAT16` and `DTYPE_BFLOAT16` storage (bit-exact conversion, `fe_f32_to_fp16`/`fe_fp16_to_f32` and `fe_f32_to_bf16`/`fe_bf16_to_f32`). The model-level repack and dispatch wiring are next steps.
+- **Parallel subsystem exists and is tested, but the engine hot path stays single-threaded.** `parallel/` ships a thread pool, a chunked row-parallel GEMM (`fe_matmul_parallel` — deterministic chunking, no shared mutable accumulator), and a ready-set DAG scheduler. `tests/test_parallel.c` covers pool partition, GEMM-vs-oracle equivalence, and scheduler causality.
+- **Compiler IR (Stage 14) exists and is tested.** `compiler/` lowers `FeGraph` → linear `FeIrProgram` (`fe_ir_lower`), dead-eliminates, resolves a static kernel table (`fe_ir_codegen`), and schedules producers-first (`fe_ir_schedule`); `fe_ir_run` executes the stream. `tests/test_compiler.c` proves IR output matches `fe_runtime_run` (≤1e-5) and the diamond schedule is causal.
 - **AVX2 vectorized path needs `N % 8 == 0`**; remainders fall back to scalar.
 - **Fixed capacities:** 512 nodes, 1024 tensors, 8 dims.
-- **Single-threaded** execution.
 
 ---
 

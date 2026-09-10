@@ -57,8 +57,12 @@ dkms.conf
 # CLion project files
 .idea/
 
+# Generated PDF (TeX build artifact)
+/temps/ferrite_guide.pdf
+
 # Ferrite build outputs (Makefile binaries, CMake build dirs, stray files)
 /build/
+/build-release/
 /cmake-build-*/
 /test_tensor
 /test_allocator

@@ -31,9 +31,15 @@ Ferrite is a zero-dependency C11 neural-network inference runtime built from fir
 | Execution engine | `runtime/engine.c/h` | Done | Dispatches every op in the enum; AVX2 wired; planner-driven activation buffer; ONNX-load→run works end-to-end (demo model: 13 nodes, 0.88 MB activation peak). Hardcoded infer_shapes replaced by `fe_infer_shapes` (optim/) |
 | Graph optimization | `optim/*.c/h` | Done — full pass pipeline | `fe_optimize(g, arena)`: shape-infer → simplify → constant-fold → Conv+BN fusion → CSE → dead-elim, wired into load; engine shapes delegated to `fe_infer_shapes`. `tests/test_opt.c` covers every pass + Conv+BN output equivalence |
 | ONNX importer | `importer/onnx.c/h` | Partial | Parses `value_info` (GraphProto fields 11/12/13); maps 20+ op strings (math, activations, pool, norms, conv2d); per-op attributes; unsupported ops fail loudly; Gemm→Linear warns on non-default attrs. Runs `fe_infer_shapes` after validate |
-| INT8 quantization | `quantization/quant.c/h` | Per-tensor + per-channel, wired into engine | `fe_quantize_model` converts MATMUL/LINEAR 2-D weights to per-channel INT8 (in-place repack, scales in weight arena); exec-plan wrappers route INT8 weights to `fe_linear_int8`/`fe_matmul_int8_dyn`; no calibration pipeline; verified by `test_quantized_engine_mlp` (err 0.0013) + `test_quantized_onnx_end_to_end` (tiny_mlp 268→100 B) |
-| Profiler + benchmarks | `tools/profiler.c/h`, `tools/bench.h/c`, `tools/bench_model.c` | Done | Shared bench framework; model-relevant bench (latency + memory + naive-vs-AVX2 table); bare-matmul benches remain               |
-| Build | `Makefile` | Linux-only | Windows + CLion machine; `.idea/` and stray files untracked           |
+| INT8 quantization | `quantization/quant.c/h` | Per-tensor + per-channel, wired into engine | `fe_quantize_model` converts MATMUL/LINEAR 2-D weights to per-channel INT8 (in-place repack, scales in weight arena); exec-plan wrappers route INT8 weights to `fe_linear_int8`/`fe_matmul_int8_dyn`; calibration = `fe_runtime_calibrate` (per-tensor activation-range collection) but no percentile/stat smoothing yet; verified by `test_quantized_engine_mlp` (err 0.0013) + `test_quantized_onnx_end_to_end` (tiny_mlp 268→100 B) |
+| INT16 dynamic quant | `quantization/quant.c/h` | API-complete, tested | `fe_quantize_int16`, `fe_matmul_int16_dyn`, `fe_linear_int16` (mirror the INT8 engine kernels); not wired into model repack/dispatch — next step is an `fe_quantize_model` analog |
+| FP16 storage | `core/fp16.c/h` | Done | `DTYPE_FLOAT16` (2 bytes), `fe_f32_to_fp16`/`fe_fp16_to_f32` + bulk bufs, bit-exact round-trip test; storage-only, compute happens after FP32 upconvert |
+| BF16 storage | `core/fp16.c/h` | Done | `DTYPE_BFLOAT16` (6th dtype, 2 bytes), `fe_f32_to_bf16`/`fe_bf16_to_f32` + bulk bufs (RNE on low 16 bits); pinned round-trip test |
+| Calibration | `runtime/engine.c` | DONE (collection half) | `fe_runtime_calibrate` runs a sample set through `fe_runtime_run`, records per non-weight float tensor the observed max |x| across samples; the ranges a static-activation-scale build consumes. Percentile/stat smoothing + static-scale engine wiring remain |
+| Parallel execution | `parallel/threadpool.c/h`, `parallel/parallel_gemm.c/h`, `parallel/scheduler.c/h` | Done | Thread pool (mutex+condvar FIFO), row-parallel GEMM (deterministic chunking, no shared mutable ctx), ready-set DAG scheduler (pool resubmits children). `test_parallel.c` covers pool partition, GEMM-vs-oracle, causal order. Opt-in — engine hot path stays single-threaded |
+| Compiler IR | `compiler/ir.h`, `lower.c`, `codegen.c`, `schedule.c` | Done | Lower `FeGraph` → linear `FeIrProgram`, dead-elim (mark-and-sweep), kernel table (`fe_ir_codegen`), producer-first schedule. `test_compiler.c` proves IR output matches the engine (≤1e-5) and the diamond schedule is causal |
+| Profiler + benchmarks | `tools/profiler.c/h`, `tools/bench.h/c`, `tools/bench_model.c`, `tools/bench_avx2.c` | Done | Shared bench framework; model-relevant bench; Debug + Release numbers recorded in `temps/bench_results.md` (fc1 `[1x65536x128]` naive 28.5→AVX2 4.77 ms = 6.0× Debug; planner saves 22.3% activations) |
+| Build | `CMakeLists.txt` (canonical), `Makefile` | Windows/CLion + WSL | `cmake -S . -B build -G Ninja`; sanitizers auto-probed (ASan unavailable in MinGW — built without); `FERRITE_COVERAGE` option; `ferrite_parallel` (Threads::Threads) + `ferrite_compiler` libs wired; 16 CTest entries, all green |
 
 **Confirmed gaps, by location:**
 
@@ -41,6 +47,8 @@ Ferrite is a zero-dependency C11 neural-network inference runtime built from fir
 - **`infer_shapes` is now a general pass.** `optim/shape_infer.c` propagates shapes through the topo order with one rule per `FeOpType` (stage-3 ops included), to a fixpoint; unknown dims stay unresolved rather than erroring, and geometry contradictions fail loudly. Wired into both `fe_onnx_load` and `fe_runtime_run`, closing the importer's value_info gap.
 - Unsupported ONNX ops return `FE_ERR_SHAPE` loudly — nothing is silently dropped.
 - Dynamic ONNX dimensions (`dim_param`) parse as 0 and rely on runtime shape inference.
+- INT16/FP16/BF16 are API-complete but not yet wired into the engine dispatch or model repack. Calibration collects per-tensor activation ranges; static activation scales and percentile smoothing are not yet consumed by the engine.
+- Parallel kernels and the compiler IR exist and are tested but are not yet integrated into `fe_runtime_run` — the engine hot path remains single-threaded.
 - Repo hygiene: `.idea/` untracked; two empty stray files (`float32`, `int8`) in the root.
 
 ---
@@ -178,9 +186,13 @@ If threading or dynamic capacities are chosen, the shape is the same: build → 
 4. Parse `value_info` in `importer/onnx.c`; broaden the op map; fail loudly on unsupported ops. *(done — Phase 3)*
 5. ~~**Full shape-inference pass**~~ (Stage 12): one shape table keyed by op, propagating from inputs through every supported op. Closes the importer's value_info reliance on static shapes. **Done** — and with it the whole Stage 12 optimizer (folding, Conv+BN fusion, CSE, simplification, dead elimination) ships as `fe_optimize`, wired into `fe_onnx_load`.
 6. ~~**Static execution plan**~~ (Stage 13): dispatch is dead — `fe_runtime_run` walks a flat array of kernel function pointers resolved at plan-build time, executes a cached memory plan, and re-plans only when the input shape changes. **Done** — `runtime/exec_plan.c/h`, embedded in `FeRuntime`; `test_exec_plan_static` proves steady-state runs do zero re-analysis. Prefetching (the one deferred Stage 13 item) waits for a benchmark that shows it paying for itself.
-7. Route dispatch to `fe_matmul_avx2` behind `fe_cpu_has_avx2()`; build the benchmark suite. *(dispatch already wired; expand `tools/bench_*` across sizes, compare to a reference)*
-8. Decide one hard feature (recommend per-channel quant); implement, test, measure.
-9. Build the golden-tensor harness; rewrite the README.
+7. ~~**Parallel runtime**~~ (Stage 11): thread pool, row-parallel GEMM, and a ready-set DAG scheduler in `parallel/`; `fe_matmul_parallel` chunking is deterministic (no shared mutable context) so a chunked GEMM matches the scalar oracle; `test_parallel.c` covers pool partition, GEMM equivalence, and scheduler causality. **Done** — `ferrite_parallel` links `Threads::Threads`; engine hot path remains single-threaded by design.
+8. ~~**Compiler IR**~~ (Stage 14): `fe_ir_lower` flattens `FeGraph` into a linear `FeIrProgram`; dead-elim, a static kernel table (`fe_ir_codegen`), and a producers-first scheduler (`fe_ir_schedule`) round out the pipeline; `test_compiler.c` proves compiled output matches the engine. **Done** — clean seam for future passes (fusion, allocation, threading).
+9. ~~**Persistent/tiling improvements**~~ (Stage 8): `bench_avx2` extended with elementwise + GEMM transposes; Debug and Release numbers recorded in `temps/bench_results.md`. **Done** — remainders still fall back to scalar (documented).
+10. ~~**FP16 + INT16**~~ (Stage 15 extras): `core/fp16.h/c` (bit-exact FP16 **and** BF16 storage) and `fe_quantize_int16`/`fe_matmul_int16_dyn`/`fe_linear_int16`. **Done** (API-complete); calibration now collects per-tensor activation ranges (`fe_runtime_calibrate`), and engine dispatch wiring + static activation scales are the remaining follow-ups.
+11. Route dispatch to `fe_matmul_avx2` behind `fe_cpu_has_avx2()`; build the benchmark suite. *(dispatch already wired; see `temps/bench_results.md`)*
+12. Decide one hard feature (recommend per-channel quant); implement, test, measure. *(per-channel quant done + measured; the natural next pick is engine-wired INT16 or threaded engine dispatch)*
+13. Build the golden-tensor harness; rewrite the README.
 
 ---
 
