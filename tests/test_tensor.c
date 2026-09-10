@@ -359,6 +359,41 @@ static void test_fp16_roundtrip(void) {
     printf("PASS test_fp16_roundtrip\n");
 }
 
+static void test_bf16_roundtrip(void) {
+    assert(fe_dtype_size(DTYPE_BFLOAT16) == 2);
+
+    /* BF16 keeps the FP32 exponent, 8 mantissa bits. Exact values. */
+    struct { float v; uint16_t bits; } bcases[] = {
+        {  1.0f, 0x3F80 }, { -2.0f, 0xC000 }, {  0.5f, 0x3F00 },
+        {  0.0f, 0x0000 }, { -0.0f, 0x8000 },
+    };
+    for (size_t i = 0; i < sizeof(bcases) / sizeof(bcases[0]); i++) {
+        uint16_t b = fe_f32_to_bf16(bcases[i].v);
+        assert(b == bcases[i].bits);
+        assert(fe_bf16_to_f32(b) == bcases[i].v);
+    }
+
+    /* 3.14159f = 0x40490FDB -> bf16 0x4049 (RNE on low 16 bits: 0x0FDB). */
+    assert(fe_f32_to_bf16(3.14159f) == 0x4049);
+    assert(fe_f32_to_bf16((float)INFINITY) == 0x7F80);
+
+    /* 8 mantissa bits -> relative error <= 2^-8. */
+    float bvals[] = {0.1f, 0.333f, 100.0f, -42.5f, 1.0e-4f, 65536.0f};
+    for (size_t i = 0; i < sizeof(bvals) / sizeof(bvals[0]); i++) {
+        float back = fe_bf16_to_f32(fe_f32_to_bf16(bvals[i]));
+        float rel = back != 0.0f ? fabsf(back - bvals[i]) / fabsf(bvals[i]) : 0.0f;
+        assert(rel < 0.0039f);              /* 2^-8 + slack */
+    }
+
+    float src[4] = {1.0f, 2.0f, -3.5f, 0.25f};
+    uint16_t bb[4];
+    float dst[4];
+    fe_f32_to_bf16_buf(src, bb, 4);
+    fe_bf16_to_f32_buf(bb, dst, 4);
+    for (int i = 0; i < 4; i++) assert(dst[i] == src[i]);
+    printf("PASS test_bf16_roundtrip\n");
+}
+
 int main(void) {
     test_alloc_strides();
     test_transpose_no_copy();
@@ -375,6 +410,7 @@ int main(void) {
     test_allclose();
     test_float64();
     test_fp16_roundtrip();
+    test_bf16_roundtrip();
     printf("\nAll tests passed.\n");
     return 0;
 }

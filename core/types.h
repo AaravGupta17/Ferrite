@@ -8,12 +8,13 @@
 #define FERRITE_MAX_DIMS 8
 
 typedef enum {
-    DTYPE_FLOAT32 = 0,
-    DTYPE_INT8    = 1,
-    DTYPE_INT32   = 2,
-    DTYPE_FLOAT64 = 3,
-    DTYPE_FLOAT16 = 4,   /* storage only; compute happens after upconvert */
-    DTYPE_INT16   = 5,   /* INT16 dynamic-quant path (Stage 15 term) */
+    DTYPE_FLOAT32     = 0,
+    DTYPE_INT8        = 1,
+    DTYPE_INT32       = 2,
+    DTYPE_FLOAT64     = 3,
+    DTYPE_FLOAT16     = 4,   /* storage only; compute happens after upconvert */
+    DTYPE_INT16       = 5,   /* INT16 dynamic-quant path (Stage 15 term)      */
+    DTYPE_BFLOAT16    = 6,   /* bfloat16 storage; compute happens after upconvert */
 } FeDtype;
 
 /*
@@ -37,12 +38,14 @@ typedef enum {
 
 static inline size_t fe_dtype_size(FeDtype dtype) {
     switch (dtype) {
-        case DTYPE_FLOAT32: return 4;
-        case DTYPE_FLOAT64: return 8;
-        case DTYPE_FLOAT16: return 2;
-        case DTYPE_INT8:    return 1;
-        case DTYPE_INT32:   return 4;
-        default:            return 0;
+        case DTYPE_FLOAT32:  return 4;
+        case DTYPE_FLOAT64:  return 8;
+        case DTYPE_FLOAT16:  return 2;
+        case DTYPE_BFLOAT16: return 2;
+        case DTYPE_INT8:     return 1;
+        case DTYPE_INT16:    return 2;
+        case DTYPE_INT32:    return 4;
+        default:             return 0;
     }
 }
 
