@@ -5,15 +5,20 @@
 #include "tensor.h"
 #include "graph.h"
 #include "allocator.h"
-#include "profiler.h"
 #include "exec_plan.h"
+
+#ifndef FERRITE_NO_PROFILER
+#include "profiler.h"
+#endif
 
 typedef struct FeRuntime FeRuntime;
 struct FeRuntime {
     FeGraph    *graph;
     FeArena     weight_arena;
     FeArena     activation_arena;
+#ifndef FERRITE_NO_PROFILER
     FeProfiler *profiler;
+#endif
     FeExecPlan  exec;          /* cached kernel resolution + memory plan */
 };
 
@@ -51,8 +56,26 @@ FeStatus fe_runtime_run_batch(FeRuntime *rt,
  * consumes (the engine today quantizes activations dynamically per run).
  */
 FeStatus fe_runtime_calibrate(FeRuntime *rt,
-                              FeTensor *const *inputs, int n,
-                              FeTensor *output, float *ranges);
+                               FeTensor *const *inputs, int n,
+                               FeTensor *output, float *ranges);
+
+/*
+ * Percentile-smoothed calibration: for each non-weight float tensor t,
+ * records per-sample max |x[t]| across the n samples, then takes the
+ * `pct`-th percentile (0..1) of those maxima instead of the global max.
+ * This smooths outlier samples without averaging or statistical fitting.
+ *
+ * `ranges` must point to `graph->n_tensors` floats. On FE_OK it holds the
+ * per-tensor smoothed range values, suitable for feeding to
+ * fe_quantize_model_static.
+ *
+ * Allocation: internally malloc's n × n_tensors floats for the sample
+ * scratch (calibration is not a hot-path operation).
+ */
+FeStatus fe_runtime_calibrate_pct(FeRuntime *rt,
+                                   FeTensor *const *inputs, int n,
+                                   FeTensor *output, float pct,
+                                   float *ranges);
 
 void fe_runtime_print_trace(const FeRuntime *rt);
 

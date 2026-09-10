@@ -79,6 +79,15 @@ FeStatus fe_quantize_per_channel(const FeTensor *in, FeTensor *out,
                                   float *scales);
 
 /*
+ * Per-channel INT16 quantization, the INT16 engine path analog of
+ * fe_quantize_per_channel: scale[j] = max_k(|in[k][j]|) / 32767,
+ * q[k][j] clamps to [-32767, 32767]. in/out are [K, N] 2D; scales holds
+ * in->shape[1] floats. Used by fe_quantize_model_int16's weight repack.
+ */
+FeStatus fe_quantize_per_channel_16(const FeTensor *in, FeTensor *out,
+                                    float *scales);
+
+/*
  * Dequantize a per-channel-quantized [K, N] int8 tensor back to float32:
  *   x[k][j] = q[k][j] * scales[j]
  */
@@ -183,5 +192,81 @@ FeStatus fe_quantize_weights(FeGraph *g,
  */
 FeStatus fe_quantize_int16(const FeTensor *in, FeTensor *out,
                            float *params);
+
+/*
+ * Engine-path quantized matmul using a STATIC (calibrated) activation scale.
+ *
+ * Identical contract to fe_matmul_int8_dyn, except scale_a is fixed at
+ * act_scale (recorded by fe_quantize_model_static from calibration ranges,
+ * act_scale = range/127). Because the scale is known, the max-|A| pass is
+ * skipped: activations quantize in one pass instead of two.
+ *
+ * act_scale must be > 0.
+ */
+FeStatus fe_matmul_int8_static(const FeTensor *A, const FeTensor *Wq,
+                               const float *w_scales, float act_scale,
+                               FeTensor *C);
+
+/*
+ * Static-activation-scale linear: fe_linear_int8 with a fixed activation
+ * scale instead of per-run dynamic. act_scale = range/127 from calibration.
+ */
+FeStatus fe_linear_int8_static(const FeTensor *A, const FeTensor *Wq,
+                               const float *w_scales, const FeTensor *b,
+                               float act_scale, FeTensor *C);
+
+/*
+ * Engine-path quantized matmul using a STATIC activation scale in INT16:
+ * fixed scale_a (range/32767), single-pass activation quantization, int16
+ * products accumulating in float, dequant with scale_a * w_scales[j].
+ */
+FeStatus fe_matmul_int16_static(const FeTensor *A, const FeTensor *Wq,
+                                const float *w_scales, float act_scale,
+                                FeTensor *C);
+
+/*
+ * Static-activation-scale INT16 linear: fe_linear_int16 with a fixed scale.
+ */
+FeStatus fe_linear_int16_static(const FeTensor *A, const FeTensor *Wq,
+                                const float *w_scales, const FeTensor *b,
+                                float act_scale, FeTensor *C);
+
+/*
+ * Quantize a graph for engine use with STATIC activation scales (Stage 15
+ * calibration). Identical repack to fe_quantize_model, plus: every
+ * non-weight float tensor whose calibrated range is > 0 gets a recorded
+ * static activation scale (act_scale = range[t]/127) on its registry entry.
+ * The engine then routes MATMUL/LINEAR nodes whose activation input has a
+ * scale to the static kernels; unsampled tensors (range == 0) stay dynamic.
+ *
+ * Must be called after weights are allocated. `ranges` must hold
+ * graph->n_tensors floats (the array fe_runtime_calibrate fills).
+ */
+FeStatus fe_quantize_model_static(FeGraph *g, FeArena *weight_arena,
+                                  const float *ranges);
+
+/*
+ * Quantize a graph's 2-D MatMul/Linear weights to per-channel INT16 for the
+ * engine path (mirror of fe_quantize_model for DTYPE_INT16). The INT16
+ * kernels use the full 16-bit quantization grid (scale = max/32767), so they
+ * hold much more weight precision than the INT8 path at half the memory of
+ * FP32. Repacks in place; records per-channel scales on the registry.
+ */
+FeStatus fe_quantize_model_int16(FeGraph *g, FeArena *weight_arena);
+
+/*
+ * Repack a graph's 2-D MatMul/Linear weights to FLOAT16 or BFLOAT16 storage
+ * in place (half the FP32 memory; compute later upconverts to FP32). With
+ * bf16 == 0 weights become DTYPE_FLOAT16, else DTYPE_BFLOAT16. Mirrors
+ * fe_quantize_model's in-place repack pattern; no scales are recorded.
+ */
+FeStatus fe_repack_model_half(FeGraph *g, FeArena *weight_arena, int bf16);
+
+/*
+ * Ensure a weight tensor has an FP32 shadow, upconverting its half-precision
+ * storage into a shadow allocated from the weight arena. Used by the exec
+ * plan so FP16/BF16 weights run existing FP32 kernels (upconvert-on-read).
+ */
+FeStatus fe_ensure_f32_weight(FeGraph *g, FeArena *weight_arena, int tidx);
 
 #endif // FERRITE_QUANT_H
