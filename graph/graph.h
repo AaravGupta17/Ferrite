@@ -8,9 +8,10 @@
 
 #define FE_MAX_NODE_INPUTS  8
 #define FE_MAX_NODE_OUTPUTS 4
-#define FE_MAX_NODES        512
-#define FE_MAX_TENSORS      1024
 #define FE_NAME_LEN         64
+
+/* Capacity ceilings (FE_MAX_NODES, FE_MAX_TENSORS) come from core/config.h,
+ * included via types.h. They are compile-time constants chosen per target. */
 
 /*
  * Operator types supported by the graph IR.
@@ -75,10 +76,19 @@ typedef struct {
     FeDtype  dtype;
     FeTensor *tensor;   /* NULL until memory planner runs */
     int      is_weight; /* 1 if this tensor holds model weights */
-    float    *scales;   /* per-output-channel scales for INT8 weights
+    float    *scales;   /* per-output-channel scales for INT8/INT16 weights
                          * (per-channel pre-quantized; NULL otherwise).
                          * Arena-allocated with the weight it describes. */
     int      n_scales;  /* 0 for float weights */
+
+    float    act_scale; /* static activation scale (range/divisor) recorded
+                         * by fe_quantize_model_static; 0 = per-run dynamic.
+                         * Applied when this tensor is the activation input
+                         * of a MATMUL/LINEAR node with pre-quantized weights. */
+    FeTensor *shadow;   /* engine-run runtime cache: FP32 upconvert of a
+                         * FLOAT16/BFLOAT16 weight (upconvert-on-read).
+                         * Arena-allocated lazily by the exec plan; NULL
+                         * for float/INT8/INT16 weights and pure activations. */
 } FeTensorEntry;
 
 /*
@@ -148,6 +158,19 @@ int fe_graph_add_node(FeGraph *g, const char *name, FeOpType op,
                        const int *outputs, int n_outputs);
 
 /* --- Analysis --- */
+
+/*
+ * Locate the graph's input tensor: the FE_OP_INPUT node's output, else the
+ * first non-weight consumed-but-unproduced tensor. Returns -1 if none.
+ * (ONNX-loaded graphs have no INPUT/OUTPUT nodes, so they take this path.)
+ */
+int fe_graph_find_input(const FeGraph *g);
+
+/*
+ * Locate the graph's output tensor: the OUTPUT node's first input, else the
+ * last topologically-ordered node's output. Returns -1 if none.
+ */
+int fe_graph_find_output(const FeGraph *g);
 
 /*
  * Compute topological order via Kahn's algorithm.

@@ -21,6 +21,8 @@ int fe_graph_add_tensor(FeGraph *g, const char *name,
     e->tensor    = NULL;
     e->scales    = NULL;
     e->n_scales  = 0;
+e->act_scale = 0.0f;
+    e->shadow    = NULL;
     if (ndim > 0) memcpy(e->shape, shape, ndim * sizeof(int));
 
     return g->n_tensors++;
@@ -43,6 +45,51 @@ if (n_outputs > 0 && outputs) memcpy(node->outputs, outputs, n_outputs * sizeof(
 
     g->topo_valid = 0;  /* invalidate any previous sort */
     return g->n_nodes++;
+}
+
+/*
+ * Locate the graph's input tensor. Hand-built graphs model the input with
+ * an explicit FE_OP_INPUT node; ONNX-loaded graphs have no such node, so
+ * the input is the first non-weight tensor that some node consumes but no
+ * node produces. Returns -1 if there is none.
+ */
+int fe_graph_find_input(const FeGraph *g) {
+    if (!g) return -1;
+    for (int i = 0; i < g->n_nodes; i++)
+        if (g->nodes[i].op == FE_OP_INPUT)
+            return g->nodes[i].outputs[0];
+
+    for (int i = 0; i < g->n_tensors; i++) {
+        const FeTensorEntry *e = &g->tensors[i];
+        if (e->is_weight) continue;
+        int consumed = 0, produced = 0;
+        for (int n = 0; n < g->n_nodes && !consumed; n++)
+            for (int k = 0; k < g->nodes[n].n_inputs; k++)
+                if (g->nodes[n].inputs[k] == i) { consumed = 1; break; }
+        for (int n = 0; n < g->n_nodes && !produced; n++)
+            for (int k = 0; k < g->nodes[n].n_outputs; k++)
+                if (g->nodes[n].outputs[k] == i) { produced = 1; break; }
+        if (consumed && !produced) return i;
+    }
+    return -1;
+}
+
+/*
+ * Locate the graph's output tensor: an explicit OUTPUT node's first input,
+ * else the last topo-ordered node's output. Returns -1 if there is none.
+ */
+int fe_graph_find_output(const FeGraph *g) {
+    if (!g) return -1;
+    for (int i = 0; i < g->n_nodes; i++)
+        if (g->nodes[i].op == FE_OP_OUTPUT && g->nodes[i].n_inputs > 0)
+            return g->nodes[i].inputs[0];
+    if (g->n_nodes > 0) {
+        int last = g->topo_valid ? g->topo_order[g->n_nodes - 1]
+                                 : g->n_nodes - 1;
+        if (g->nodes[last].n_outputs > 0)
+            return g->nodes[last].outputs[0];
+    }
+    return -1;
 }
 
 /*
