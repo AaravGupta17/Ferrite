@@ -10,8 +10,13 @@
 #include "graph.h"
 #include "allocator.h"
 #include <stddef.h>
-/* Alignment for every tensor buffer — 64 bytes for SIMD */
-#define PLANNER_ALIGN 64
+/* Alignment for every tensor buffer. 64 bytes keeps SIMD backends aligned;
+ * a scalar-only device build (Section 4.3) lowers it via the build-time
+ * FERRITE_PLANNER_ALIGN (generated core/config.h); the committed config.h
+ * provides the desktop default of 64 for Makefile builds. */
+#ifndef FERRITE_PLANNER_ALIGN
+#define FERRITE_PLANNER_ALIGN 64
+#endif
 
 static size_t align_up(size_t x, size_t align) {
     return (x + align - 1) & ~(align - 1);
@@ -114,7 +119,7 @@ FeStatus fe_plan_memory(const FeGraph *g, FePlan *plan) {
 
     for (int i = 0; i < plan->n_lifetimes; i++) {
         FeTensorLifetime *lt = &lts[i];
-        size_t need = align_up((size_t)lt->size_bytes, PLANNER_ALIGN);
+        size_t need = align_up((size_t)lt->size_bytes, FERRITE_PLANNER_ALIGN);
 
         /* Search free pool for a slot that:
          *   1. Was freed before this tensor's first_use
@@ -176,7 +181,7 @@ FeStatus fe_plan_apply(FeGraph *g, FePlan *plan,
      * and kernels writing tensor data would clobber the metadata.
      */
     if (data_bytes > 0 && !fe_arena_alloc(metadata_arena, data_bytes,
-                                          PLANNER_ALIGN))
+                                          FERRITE_PLANNER_ALIGN))
         return FE_ERR_NOMEM;
 
     for (int i = 0; i < plan->n_lifetimes; i++) {
@@ -227,7 +232,7 @@ void fe_plan_print(const FeGraph *g, const FePlan *plan) {
     size_t naive_total = 0;
     for (int i = 0; i < plan->n_lifetimes; i++)
         naive_total += align_up((size_t)plan->lifetimes[i].size_bytes,
-                                PLANNER_ALIGN);
+                                FERRITE_PLANNER_ALIGN);
 
     printf("\nNaive (no reuse): %zu bytes\n", naive_total);
     printf("Planned (reuse):  %zu bytes\n", plan->total_activation_bytes);

@@ -4,29 +4,19 @@
  * count chosen at init (or defaulted to hardware threads). submit() enqueues
  * one job, wait() blocks until every enqueued job has finished. destroy()
  * flags shutdown and joins all workers.
+ *
+ * Thread creation/joining goes through the platform seam (core/platform.h) so
+ * device ports supply their own primitives; the pool's mutex+cond are direct
+ * pthread objects, which every supported host provides.
  */
 #include "threadpool.h"
+#include "platform.h"
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <unistd.h>
-#if defined(_POSIX_VERSION) && _POSIX_VERSION >= 200112L
-#endif
-#endif
-
 int fe_cpu_count(void) {
-#ifdef _WIN32
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    return (int)si.dwNumberOfProcessors;
-#else
-    long n = sysconf(_SC_NPROCESSORS_ONLN);
-    return n > 0 ? (int)n : 1;
-#endif
+    return fe_platform_cpu_count();
 }
 
 typedef struct {
@@ -36,7 +26,7 @@ typedef struct {
 } FePoolSync;
 
 typedef struct {
-    pthread_t   id;
+    void        *handle;     /* opaque thread handle from FePlatThreadCreate */
     FeThreadPool *pool;
 } FeThread;
 
@@ -93,7 +83,8 @@ FeStatus fe_threadpool_init(FeThreadPool *tp, int nthreads) {
     FeThread *ts = (FeThread *)tp->threads;
     for (int i = 0; i < nthreads; i++) {
         ts[i].pool = tp;
-        if (pthread_create(&ts[i].id, NULL, fe_pool_worker, &ts[i]) != 0) {
+        if (!fe_platform_thread_create(&ts[i].handle, fe_pool_worker,
+                                       &ts[i])) {
             tp->nthreads = i;   /* only the created workers will be joined */
             fe_threadpool_destroy(tp);
             return FE_ERR_NOMEM;
@@ -142,7 +133,8 @@ void fe_threadpool_destroy(FeThreadPool *tp) {
 
         if (tp->threads) {
             FeThread *ts = (FeThread *)tp->threads;
-            for (int i = 0; i < tp->nthreads; i++) pthread_join(ts[i].id, NULL);
+            for (int i = 0; i < tp->nthreads; i++)
+                fe_platform_thread_join(ts[i].handle);
             free(tp->threads);
         }
         pthread_mutex_destroy(&s->lock);

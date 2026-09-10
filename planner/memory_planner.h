@@ -7,7 +7,8 @@
 #include "allocator.h"
 #include <stddef.h>
 
-#define FE_MAX_ALLOCS 1024
+/* FE_MAX_ALLOCS (planner allocation ceiling) comes from core/config.h via
+ * types.h, itself included above. */
 
 /*
  * Lifetime of a single tensor in the graph.
