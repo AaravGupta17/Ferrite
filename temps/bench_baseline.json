@@ -1,0 +1,13 @@
+{
+  "_note": "Best-effort seed on a Windows/MinGW (GCC) machine, N=256 microbench (AMD Ryzen 5 5600). REGENERATE on the Linux CI runner before trusting it: run bench_avx2 --json, then check_perf.py --current out.json --seed temps/bench_baseline.json --label linux-ci.",
+  "bench": "bench_avx2 (model-independent microbench)",
+  "elem_avx2_ms": 0.125,
+  "elem_naive_ms": 0.015,
+  "elem_speedup": 0.12,
+  "gemm_base_ms": 1.123,
+  "gemm_speedup": 49.9,
+  "gemm_transb_ms": 56.042,
+  "matmul_avx2_ms": 1.101,
+  "matmul_naive_ms": 1.111,
+  "matmul_speedup": 1.01
+}

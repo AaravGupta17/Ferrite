@@ -1,0 +1,170 @@
+# CI pipeline (Section 1.3). Run on every push/PR.
+#
+# Legs:
+#   test       — Debug build (ASan/UBSan when the toolchain ships them), full ctest.
+#   sanitize   — Debug, sanitizers MANDATORY: the job fails if CMake reports
+#                "ASan/UBSan requested but unavailable". This is the leg that
+#                guarantees sanitizers are never silently skipped in CI.
+#   fuzz       — clang's libFuzzer against the ONNX parser, time-boxed, in a
+#                persistent corpus (fuzz/corpus). Fails on crash/sanitizer trip.
+#   perf       — Release bench_avx2 vs committed temps/bench_baseline.json
+#                (model-independent microbench; the acoustic model is not part
+#                of the gate).  Re-seed the baseline with:
+#                  bench_avx2 --json > /tmp/cur.json
+#                  python3 tools/check_perf.py --current /tmp/cur.json \
+#                    --seed temps/bench_baseline.json --label linux-ci
+#   coverage   — gcov build + gcovr, per-file report, minimum line coverage.
+#
+# Honest-numbers rule: the perf leg reports build mode and CPU in its logs;
+# never tune the threshold (default 20%) to hide a real regression.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: build + test (Debug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build
+      - name: Run suite
+        run: ctest --test-dir build --output-on-failure
+
+  sanitize:
+    name: build + test (ASan/UBSan mandatory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure
+        id: configure
+        run: cmake -S . -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFERRITE_SANITIZE=ON
+      - name: Assert sanitizers actually enabled
+        run: |
+          cmake -S . -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFERRITE_SANITIZE=ON 2>&1 \
+            | tee /tmp/configure.log
+          if grep -q "building without" /tmp/configure.log; then
+            echo "::error::sanitizers were requested but silently disabled"
+            exit 1
+          fi
+      - name: Build
+        run: cmake --build build-san
+      - name: Run suite under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build-san --output-on-failure
+
+  fuzz:
+    name: ONNX parser fuzz (libFuzzer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang
+      - name: Configure (Clang)
+        run: cmake -S . -B build-fuzz -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Debug
+      - name: Build fuzzer
+        run: cmake --build build-fuzz --target fuzz_onnx_fuzzer
+      - name: Fuzz (time-boxed)
+        continue-on-error: false
+        run: |
+          ./build-fuzz/fuzz_onnx_fuzzer fuzz/corpus \
+            -max_total_time=120 \
+            -timeout=10 \
+            -max_len=65536 \
+            -artifact_prefix=build-fuzz/artifacts/
+      - name: Surface crashes if any
+        if: failure()
+        run: ls -la build-fuzz/artifacts/ || true
+
+  perf:
+    name: perf gate (Release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure (Release)
+        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build bench_avx2
+        run: cmake --build build-release --target bench_avx2
+      - name: Measure
+        run: ./build-release/bench_avx2 --json > /tmp/bench_current.json
+      - name: Compare vs baseline
+        run: |
+          uname -a
+          python3 tools/check_perf.py \
+            --current /tmp/bench_current.json \
+            --baseline temps/bench_baseline.json \
+            --label "linux-ci Release" \
+            --threshold 0.20
+
+  coverage:
+    name: coverage gate (gcov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja + gcovr
+        run: sudo apt-get update && sudo apt-get install -y ninja-build gcovr
+      - name: Configure (coverage)
+        run: cmake -S . -B build-cov -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFERRITE_COVERAGE=ON
+      - name: Build + run suite
+        run: |
+          cmake --build build-cov
+          ctest --test-dir build-cov --output-on-failure
+      - name: Coverage report + threshold
+        run: |
+          gcovr -r . -f core/ -f graph/ -f ops/ \
+            --xml coverage.xml \
+            --fail-under-line 70
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  pi:
+    name: Pi Zero W cross-build + QEMU (Section 3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchain + qemu
+        run: sudo apt-get update && sudo apt-get install -y ninja-build \
+          gcc-arm-linux-gnueabihf qemu-user-static
+      - name: Configure (cross)
+        run: cmake -S . -B build-pi -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE=cmake/raspberry-pi-zero-w.toolchain.cmake
+      - name: Build
+        run: cmake --build build-pi
+      - name: Run suite under QEMU arm
+        run: ctest --test-dir build-pi --output-on-failure
+
+  esp:
+    name: ESP32 component build (Section 4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ferrite IDF component (compile gate)
+        uses: docker://espressif/idf:latest
+        with:
+          args: bash -c "cd idf/demo && idf.py set-target esp32s3 && idf.py build"
+      - name: Platform seam parity check
+        run: |
+          # The ESP32 platform file must reject non-Xtensa compilation rather
+          # than silently becoming a host stub.
+          docker run --rm -v "$PWD:/ws" -w /ws espressif/idf:latest \
+            bash -c "gcc -c core/platform_esp32.c -o /tmp/nope.o \
+              && echo 'FAIL: platform_esp32 compiled on host' && exit 1 \
+              || echo 'OK: platform_esp32 guards non-Xtensa builds'"

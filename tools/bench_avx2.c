@@ -12,6 +12,8 @@
 #define RUNS 20
 #define EW    (1 << 20)   /* 1M floats per elementwise bench */
 
+static int json_mode = 0;
+
 static double now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -26,6 +28,8 @@ static double bench(FeStatus (*fn)(const FeTensor*, const FeTensor*, FeTensor*),
     return (now_ms() - start) / RUNS;
 }
 
+static double t_mm_naive, t_mm_avx2, t_ew_naive, t_ew_avx2, t_gemm_base, t_gemm_transb;
+
 static void bench_matmul(void) {
     int shape[] = {N, N};
     FeTensor *A = fe_tensor_alloc(DTYPE_FLOAT32, 2, shape);
@@ -39,7 +43,11 @@ static void bench_matmul(void) {
     double t_naive = bench(fe_matmul,      A, B, C);
     double t_avx2  = bench(fe_matmul_avx2, A, B, C);
 
+    t_mm_naive = t_naive;
+    t_mm_avx2  = t_avx2;
+
     double flops = 2.0 * N*N*N;
+    if (json_mode) return;
     printf("MatMul [%dx%dx%d]: naive %.2f ms (%.2f GFLOPS), AVX2 %.2f ms (%.2f GFLOPS), %.1fx\n",
            N, N, N, t_naive, flops / (t_naive * 1e6), t_avx2,
            flops / (t_avx2 * 1e6), t_naive / t_avx2);
@@ -65,7 +73,11 @@ static void bench_elementwise(void) {
         for (int i = 0; i < EW; i++) o[i] = a[i] + b[i];
     double t_naive = (now_ms() - start) / RUNS;
 
+    t_ew_naive = t_naive;
+    t_ew_avx2  = t_avx2;
+
     double gflops = (double)EW / (t_avx2 * 1e6);
+    if (json_mode) return;
     printf("Elementwise add [%d]: naive %.2f ms, AVX2 %.2f ms (%.2f GFLOP/s), %.1fx\n",
            EW, t_naive, t_avx2, gflops, t_naive / t_avx2);
     free(a); free(b); free(o);
@@ -94,21 +106,41 @@ static void bench_gemm_transposes(void) {
     for (int i = 0; i < RUNS; i++) fe_gemm(A, 0, B, 1, C, 1.0f, 0.0f);
     double t_scalar = (now_ms() - start) / RUNS;
 
+    t_gemm_base  = t_avx2;
+    t_gemm_transb = t_scalar;
+
     double flops = 2.0 * N*N*N;
+    if (json_mode) return;
     printf("GEMM [%dx%dx%d]: base(AVX2) %.2f ms (%.2f GFLOPS), transB(scalar) %.2f ms, %.1fx\n",
            N, N, N, t_avx2, flops / (t_avx2 * 1e6), t_scalar,
            t_scalar / t_avx2);
     fe_tensor_free(A); fe_tensor_free(B); fe_tensor_free(C);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc > 1 && strncmp(argv[1], "--json", 6) == 0) json_mode = 1;
     if (!fe_cpu_has_avx2()) {
         printf("AVX2 not available on this CPU\n");
         return 1;
     }
-    printf("AVX2 available\n\n");
+    if (!json_mode) printf("AVX2 available\n\n");
     bench_matmul();
     bench_elementwise();
     bench_gemm_transposes();
+
+    if (json_mode) {
+        printf("{\n");
+        printf("  \"bench\": \"bench_avx2 (model-independent microbench)\",\n");
+        printf("  \"matmul_naive_ms\": %.3f,\n", t_mm_naive);
+        printf("  \"matmul_avx2_ms\": %.3f,\n", t_mm_avx2);
+        printf("  \"matmul_speedup\": %.2f,\n", t_mm_naive / t_mm_avx2);
+        printf("  \"elem_naive_ms\": %.3f,\n", t_ew_naive);
+        printf("  \"elem_avx2_ms\": %.3f,\n", t_ew_avx2);
+        printf("  \"elem_speedup\": %.2f,\n", t_ew_naive / t_ew_avx2);
+        printf("  \"gemm_base_ms\": %.3f,\n", t_gemm_base);
+        printf("  \"gemm_transb_ms\": %.3f,\n", t_gemm_transb);
+        printf("  \"gemm_speedup\": %.2f\n", t_gemm_transb / t_gemm_base);
+        printf("}\n");
+    }
     return 0;
 }
