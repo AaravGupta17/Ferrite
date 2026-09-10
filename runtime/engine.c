@@ -2,6 +2,7 @@
 #include "exec_plan.h"
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 /*
  * The engine owns the runtime lifecycle (arena binding, weight allocation,
@@ -64,6 +65,34 @@ FeStatus fe_runtime_run_batch(FeRuntime *rt,
         if (!inputs[i] || !outputs[i]) return FE_ERR_NULL;
         FeStatus s = fe_runtime_run(rt, inputs[i], outputs[i]);
         if (s != FE_OK) return s;
+    }
+    return FE_OK;
+}
+
+FeStatus fe_runtime_calibrate(FeRuntime *rt,
+                              FeTensor *const *inputs, int n,
+                              FeTensor *output, float *ranges) {
+    if (!rt || !inputs || n < 1 || !output || !ranges) return FE_ERR_NULL;
+
+    FeGraph *g = rt->graph;
+    int nt = g->n_tensors;
+    for (int t = 0; t < nt; t++) ranges[t] = 0.0f;
+
+    for (int s = 0; s < n; s++) {
+        if (!inputs[s]) return FE_ERR_NULL;
+        FeStatus st = fe_runtime_run(rt, inputs[s], output);
+        if (st != FE_OK) return st;
+        for (int t = 0; t < nt; t++) {
+            FeTensorEntry *e = &g->tensors[t];
+            if (e->is_weight || !e->tensor || !e->tensor->data) continue;
+            if (e->tensor->dtype != DTYPE_FLOAT32) continue;
+            int m = fe_tensor_numel(e->tensor);
+            const float *d = (const float *)e->tensor->data;
+            for (int i = 0; i < m; i++) {
+                float a = fabsf(d[i]);
+                if (a > ranges[t]) ranges[t] = a;
+            }
+        }
     }
     return FE_OK;
 }

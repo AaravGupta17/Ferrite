@@ -4,6 +4,8 @@
 #include <string.h>
 #include <assert.h>
 #include "../core/tensor.h"
+#include "../graph/graph.h"
+#include "../runtime/engine.h"
 #include "../quantization/quant.h"
 
 #define EPSILON_QUANT 0.05f   /* quantization introduces ~1% error */
@@ -198,12 +200,52 @@ static void test_matmul_int8_per_channel_accuracy(void) {
     printf("PASS test_matmul_int8_per_channel_accuracy\n");
 }
 
+static void test_calibrate_activations(void) {
+    /* Graph: INPUT(4) -> RELU(4); OUTPUT consumes the relu result. */
+    FeGraph g;
+    fe_graph_init(&g);
+    int s_in[] = {4};
+    int s_out[] = {4};
+    int t_in  = fe_graph_add_tensor(&g, "input", DTYPE_FLOAT32, 1, s_in,  0);
+    int t_r   = fe_graph_add_tensor(&g, "relu",  DTYPE_FLOAT32, 1, s_out, 0);
+    int lin[] = {t_in}, rout[] = {t_r};
+    fe_graph_add_node(&g, "input",  FE_OP_INPUT,  NULL, 0, lin,  1);
+    fe_graph_add_node(&g, "relu",   FE_OP_RELU,   lin,  1, rout, 1);
+    fe_graph_add_node(&g, "output", FE_OP_OUTPUT, rout, 1, NULL, 0);
+
+    static unsigned char wbuf[4096], abuf[16384];
+    FeRuntime rt;
+    assert(fe_runtime_init(&rt, &g, wbuf, sizeof(wbuf),
+                           abuf, sizeof(abuf)) == FE_OK);
+    assert(fe_runtime_alloc_weights(&rt) == FE_OK);
+
+    FeTensor *in1 = fe_tensor_alloc(DTYPE_FLOAT32, 1, s_in);
+    FeTensor *in2 = fe_tensor_alloc(DTYPE_FLOAT32, 1, s_in);
+    FeTensor *out = fe_tensor_alloc(DTYPE_FLOAT32, 1, s_out);
+    float d1[] = { 1.0f,  2.0f,  3.0f,  4.0f };
+    float d2[] = {-10.0f, 20.0f, 30.0f, 40.0f };
+    memcpy(in1->data, d1, sizeof d1);
+    memcpy(in2->data, d2, sizeof d2);
+
+    FeTensor *inputs[2] = {in1, in2};
+    float ranges[16];
+    assert(fe_runtime_calibrate(&rt, inputs, 2, out, ranges) == FE_OK);
+
+    /* Per-tensor observed max |activation| across the 2-sample set. */
+    assert(fabsf(ranges[t_in] - 40.0f) < 1e-5f);  /* |in2| peaks at 40 */
+    assert(ranges[t_r] >= 4.0f && fabsf(ranges[t_r] - 40.0f) < 1e-5f);
+
+    fe_tensor_free(in1); fe_tensor_free(in2); fe_tensor_free(out);
+    printf("PASS test_calibrate_activations\n");
+}
+
 int main(void) {
     test_quantize_dequantize();
     test_matmul_int8_accuracy();
     test_memory_reduction();
     test_per_channel_beats_per_tensor_on_skewed_weights();
     test_matmul_int8_per_channel_accuracy();
+    test_calibrate_activations();
     printf("\nAll tests passed.\n");
     return 0;
 }

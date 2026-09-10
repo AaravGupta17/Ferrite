@@ -40,6 +40,20 @@ FeStatus fe_runtime_run_batch(FeRuntime *rt,
                               FeTensor *const *outputs,
                               int n);
 
+/*
+ * Calibrate activation ranges: run `n` samples of the caller's provided
+ * shape through the runtime and record, for every non-weight float tensor,
+ * the maximum |x| observed across the sample set. `ranges` must point to
+ * `graph->n_tensors` floats and is fully written on FE_OK.
+ *
+ * This is the data-collection half of the quantization calibration pipeline:
+ * the observed per-tensor ranges are what a static-activation-scale build
+ * consumes (the engine today quantizes activations dynamically per run).
+ */
+FeStatus fe_runtime_calibrate(FeRuntime *rt,
+                              FeTensor *const *inputs, int n,
+                              FeTensor *output, float *ranges);
+
 void fe_runtime_print_trace(const FeRuntime *rt);
 
 #endif
