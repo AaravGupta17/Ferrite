@@ -1,7 +1,10 @@
+# Legacy partial build path (WSL convenience). CMake is canonical — this
+# Makefile covers a subset of targets and may lag new subsystems; section 2
+# artifacts (FEMD) and 2.3-2.6 sources are added below for parity.
 CC     = gcc
-CFLAGS = -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime -Iimporter
+CFLAGS = -std=c11 -D_POSIX_C_SOURCE=199309L -Wall -Wextra -fsanitize=address,undefined -g -Icore -Igraph -Iops -Iruntime -Iimporter -Isimd -Iplanner -Iquantization -Ioptim -Itools
 
-all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d test_profiler test_quant test_tensor_ser
+all: test_tensor test_allocator test_ops test_graph test_engine test_onnx test_planner test_conv1d test_profiler test_quant test_tensor_ser test_artifact test_error_contract fuzz_runner
 
 test_tensor_ser: core/tensor.o core/tensor_ser.o tests/test_tensor_ser.o
 	$(CC) $(CFLAGS) -o test_tensor_ser core/tensor.o core/tensor_ser.o tests/test_tensor_ser.o
@@ -22,7 +25,12 @@ tests/test_tensor.o: tests/test_tensor.c core/tensor.h core/types.h
 	$(CC) $(CFLAGS) -c tests/test_tensor.c -o tests/test_tensor.o
 
 clean:
-	rm -f core/*.o tests/*.o test_tensor
+	rm -f core/*.o tests/*.o ops/*.o simd/*.o runtime/*.o planner/*.o \
+	    importer/*.o quantization/*.o tools/*.o optim/*.o \
+	    test_tensor test_allocator test_ops test_graph test_engine \
+	    test_onnx test_planner test_conv1d test_profiler test_quant \
+	    test_tensor_ser test_artifact ferrite_compile test_error_contract \
+	    fuzz_runner
 
 test_allocator: core/tensor.o core/allocator.o tests/test_allocator.o
 	$(CC) $(CFLAGS) -o test_allocator core/tensor.o core/allocator.o tests/test_allocator.o
@@ -190,3 +198,53 @@ ops/reduce.o: ops/reduce.c ops/ops.h core/tensor.h core/types.h
 
 ops/stability.o: ops/stability.c ops/ops.h core/tensor.h core/types.h
 	$(CC) $(CFLAGS) -c ops/stability.c -o ops/stability.o
+
+# --- Section 2 additions (2.5 SIMD dispatch, 2.6 platform seam, 2.1/2.2
+# kernels + FEMD artifact) ---
+#
+# Generic compile rule as a safety net: any object referenced by the targets
+# below that lacks an explicit rule compiles from its .c. Explicit rules
+# above take precedence.
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+CORE_OBJS     = core/tensor.o core/tensor_ser.o core/allocator.o core/log.o \
+                core/fp16.o core/platform.o
+SIMD_OBJS     = simd/backend.o simd/scalar.o simd/matmul_avx2.o \
+                simd/elementwise_avx2.o
+OPS_OBJS      = ops/matmul.o ops/activations.o ops/conv1d.o ops/conv2d.o \
+                ops/elementwise.o ops/gemm.o ops/math.o ops/norm.o ops/pool.o \
+                ops/rand.o ops/reduce.o ops/sequence.o ops/stability.o
+CRT_OBJS      = graph/graph.o planner/memory_planner.o runtime/engine.o \
+                runtime/exec_plan.o
+DEVICE_OBJS   = runtime/kernels.o runtime/model_ser.o
+OPTIM_OBJS    = optim/shape_infer.o optim/constant_fold.o optim/dead_elim.o \
+                optim/simplify.o optim/cse.o optim/fusion.o optim/optim.o
+
+test_artifact: $(CORE_OBJS) $(SIMD_OBJS) $(OPS_OBJS) $(CRT_OBJS) \
+               $(DEVICE_OBJS) $(OPTIM_OBJS) quantization/quant.o \
+               importer/onnx.o tools/profiler.o tests/test_artifact.o
+	$(CC) $(CFLAGS) -o test_artifact $(CORE_OBJS) $(SIMD_OBJS) $(OPS_OBJS) \
+	    $(CRT_OBJS) $(DEVICE_OBJS) $(OPTIM_OBJS) quantization/quant.o \
+	    importer/onnx.o tools/profiler.o tests/test_artifact.o -lm -lpthread
+
+ferrite_compile: $(CORE_OBJS) $(SIMD_OBJS) $(OPS_OBJS) $(DEVICE_OBJS) \
+                 $(OPTIM_OBJS) planner/memory_planner.o importer/onnx.o \
+                 tools/ferrite_compile.o
+	$(CC) $(CFLAGS) -o ferrite_compile $(CORE_OBJS) $(SIMD_OBJS) $(OPS_OBJS) \
+	    $(DEVICE_OBJS) $(OPTIM_OBJS) planner/memory_planner.o \
+	    importer/onnx.o tools/ferrite_compile.o -lm -lpthread
+
+test_error_contract: $(CORE_OBJS) $(SIMD_OBJS) $(OPS_OBJS) $(CRT_OBJS) \
+                     $(DEVICE_OBJS) $(OPTIM_OBJS) quantization/quant.o \
+                     importer/onnx.o tools/profiler.o tests/test_error_contract.o
+	$(CC) $(CFLAGS) -o test_error_contract $(CORE_OBJS) $(SIMD_OBJS) \
+	    $(OPS_OBJS) $(CRT_OBJS) $(DEVICE_OBJS) $(OPTIM_OBJS) \
+	    quantization/quant.o importer/onnx.o tools/profiler.o \
+	    tests/test_error_contract.o -lm -lpthread
+
+fuzz_runner: $(CORE_OBJS) graph/graph.o $(OPTIM_OBJS) importer/onnx.o \
+             fuzz/fuzz_onnx.o fuzz/fuzz_main.o
+	$(CC) $(CFLAGS) -o fuzz_runner $(CORE_OBJS) graph/graph.o $(OPTIM_OBJS) \
+	    importer/onnx.o fuzz/fuzz_onnx.o fuzz/fuzz_main.o -lm -lpthread

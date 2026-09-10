@@ -60,8 +60,13 @@ dkms.conf
 # Generated PDF (TeX build artifact)
 /temps/ferrite_guide.pdf
 
+# Python bytecode (check_perf.py)
+__pycache__/
+*.pyc
+
 # Ferrite build outputs (Makefile binaries, CMake build dirs, stray files)
 /build/
+/build-*/
 /build-release/
 /cmake-build-*/
 /test_tensor
@@ -75,9 +80,20 @@ dkms.conf
 /test_profiler
 /test_quant
 /test_tensor_ser
+/test_artifact
+/ferrite_compile
+/fuzz_runner
+/fuzz_onnx_fuzzer
+/fuzz/onnx_fuzz_input.bin
 /bench_matmul
 /bench_matmul_avx2
 /bench_avx2
 /demo
 /float32
 /int8
+
+# FEMD artifacts written by tests (round-trip / corruption fixtures)
+/test_artifact*.femd
+/test_artifact_bad_*.femd
+tests/*.femd
+tests/*.femd.h
