@@ -1,8 +1,8 @@
 // tools/profiler.c
 #include "profiler.h"
+#include "platform.h"
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 
 void fe_profiler_init(FeProfiler *p) {
     memset(p, 0, sizeof(FeProfiler));
@@ -17,9 +17,7 @@ void fe_profiler_reset(FeProfiler *p) {
 }
 
 uint64_t fe_profiler_now_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+    return fe_platform_now_ns();
 }
 
 void fe_profiler_record(FeProfiler *p, const char *op_name, uint64_t ns) {

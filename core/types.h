@@ -5,7 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define FERRITE_MAX_DIMS 8
+/* Compile-time capacity ceilings. Angle include: the CMake build injects a
+ * generated core/config.h ahead of the source tree (per-target values); the
+ * Makefile build path falls back to the committed core/config.h defaults. */
+#include <config.h>
 
 typedef enum {
     DTYPE_FLOAT32     = 0,

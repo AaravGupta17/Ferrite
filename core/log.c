@@ -1,5 +1,6 @@
 // core/log.c
 #include "log.h"
+#include "platform.h"
 #include <stdarg.h>
 #include <stdio.h>
 
@@ -14,12 +15,18 @@ static const char *level_name(FeLogLevel lvl) {
 }
 
 void fe_log(FeLogLevel lvl, const char *file, int line, const char *fmt, ...) {
-    fprintf(stderr, "[ferrite %s %s:%d] ", level_name(lvl), file, line);
+    char linebuf[256];
+    int off = snprintf(linebuf, sizeof(linebuf),
+                       "[ferrite %s %s:%d] ", level_name(lvl), file, line);
 
     va_list args;
     va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
+    off += vsnprintf(linebuf + (size_t)off, sizeof(linebuf) - (size_t)off,
+                     fmt, args);
     va_end(args);
 
-    fputc('\n', stderr);
+    if ((size_t)off >= sizeof(linebuf)) off = (int)sizeof(linebuf) - 2;
+    linebuf[off] = '\n';
+    linebuf[off + 1] = '\0';
+    fe_platform_log_write(linebuf);
 }
