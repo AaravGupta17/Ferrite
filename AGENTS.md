@@ -43,8 +43,12 @@ ctest --test-dir build          # all tests, from anywhere
 | `runtime/` | Execution engine: `FeRuntime` ties graph + arenas + kernels; static exec plan | `engine.c/h`, `exec_plan.c/h` |
 | `importer/` | Hand-rolled ONNX protobuf wire parser and graph loader | `onnx.c/h` |
 | `quantization/` | Symmetric INT8 (engine-wired) + INT16 dynamic-quant paths | `quant.c/h` |
-| `tools/` | Profiler, benchmark harnesses | `profiler.c/h`, `bench.c/h`, `bench_model.c`, `bench_avx2.c` |
+| `tools/` | Profiler, benchmark harnesses, FEMD compiler, perf gate checker | `profiler.c/h`, `bench.c/h`, `bench_model.c`, `bench_avx2.c`, `ferrite_compile.c`, `check_perf.py` |
 | `tests/` | One test binary per subsystem | `test_*.c`, `tiny_mlp.onnx` |
+| `fuzz/` | ONNX-parser fuzz harness (libFuzzer + standalone replayer) | `fuzz_onnx.c/h`, `fuzz_main.c`, `corpus/` |
+| `cmake/` | Cross toolchain presets (Pi Zero W, ESP32) | `raspberry-pi-zero-w.toolchain.cmake`, `esp32.toolchain.cmake` |
+| `idf/` | ESP-IDF integration: component + demo project | `ferrite/` (compiled via `ferrite_device` sources), `demo/`, `README.md` |
+| `docs/` | Port docs | `pi-zero-w-port.md`, `esp32-port.md` |
 | `temps/` | Working docs: guide, roadmap, doc standards, staged plan, benchmark results | `explain.md`, `roadmap.md`, `documentation.md`, `Stage*.md`, `bench_results.md` |
 
 Layer dependencies point downward only: `importer/` → `optim/` + `graph/` → `compiler/` (on graph/ops/core) → `planner/` → `parallel/` → `runtime/` → `ops/` + `simd/` + `core/`. `tools/` and `tests/` sit on top.
@@ -93,16 +97,35 @@ Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the han
 
 - **The run loop is a static execution plan** (`runtime/exec_plan.c`, Stage 13). `fe_exec_build` resolves each `topo_order` node to a kernel wrapper via the `k_fns[]` table indexed by `FeOpType` (every op exports one; no entry → loud `FE_ERR_SHAPE` at build, nothing silently skipped). `fe_runtime_run` re-applies the cached memory plan and walks the flat `FeExecStep` array — the only per-run analysis is an input-shape comparison triggering a rare rebuild. `FeRuntime` embeds the `FeExecPlan`.
 - **AVX2 is wired into dispatch.** `fe_matmul` (`ops/matmul.c`) already routes to `fe_matmul_avx2` behind `fe_cpu_has_avx2()`, with scalar fallback — this is what the engine calls for every `MATMUL`/`LINEAR` node. `fe_relu`/`fe_add`/`fe_mul` route to `simd/elementwise_avx2.c` the same way; `fe_gemm` routes its base case (no transpose, `alpha=1`, `beta=0`). `tests/test_simd.c` is the regression check (naive vs. AVX2, vectorized and remainder paths, elementwise equivalence); `bench_avx2` and `bench_model` are timing only, not correctness checks.
-- **Alignment is guaranteed and tested.** Planner data offsets and arena allocations are 64-byte aligned (`tests/test_planner.c` `test_alignment`), so SIMD kernels never hit misaligned loads/stores.
+- **Alignment is guaranteed and tested.** Planner data offsets and arena allocations are aligned to `FERRITE_PLANNER_ALIGN` — 64 bytes on SIMD-enabled targets (`tests/test_planner.c` `test_alignment`), so SIMD kernels never hit misaligned loads/stores; scalar-only device ports lower it (Section 4.3).
 - **Planner is wired into the runtime.** `fe_runtime_run` executes the static plan: on the first run (or an input shape change) it re-infers shapes and calls `fe_plan_memory`, caching the `FePlan`; per run it resets the arena and calls `fe_plan_apply` to re-assign the cached byte offsets (`runtime/exec_plan.c`). `fe_plan_apply` reserves the planned data region in the arena before arena-allocating the `FeTensor` metadata structs, so metadata never collides with tensor data. `fe_runtime_init` validates the graph (`fe_graph_validate`) right after `fe_graph_topo_sort`. `tests/test_engine.c` asserts the planned buffer is smaller than the naive no-reuse allocation, running off one planned activation buffer, plus an ONNX load→run test (`test_onnx_load_and_run`) and a static-plan test (`test_exec_plan_static` — same-shape reruns do zero re-analysis).
 - **Graph optimization is a wired-in pass pipeline.** `fe_optimize` (`optim/optim.c`) runs shape-infer → simplify (identity transpose/flatten) → constant-fold → Conv+BN fusion → CSE → dead-elim, then re-sorts and re-validates. `fe_onnx_load` runs it after `fe_graph_validate`, so loaded models arrive optimized (e.g. the demo model's Conv+BN pairs fuse away at load — no `BatchNorm` rows left in the profile). Pass math and both refactors are in `tests/test_opt.c`, which also proves output equivalence pre/post optimize through the engine. Conventions: passes rewrite dead producers into `INPUT` feeds (op + zero inputs, outputs kept) and let dead-elim compact; `fe_runtime_alloc_weights` skips already-backed (`e->tensor != NULL`) weights so folded/fused constants survive runtime init.
 - **The importer fails loudly on unsupported ONNX ops** (`FE_ERR_SHAPE` + stderr message) — nothing is silently dropped. It maps 20+ op strings, reads per-op attributes (`alpha`, `epsilon`, `num_groups`, `kernel_shape`, `strides`, `pads`, `num_heads`), applies ONNX defaults, and requires critical inputs/attrs before accepting a node. `Gemm` maps to `Linear` and warns (never guesses) when non-default `transA`/`transB`/`alpha`/`beta` would change the result.
 - **Quantization is per-tensor and per-channel AND wired into the engine** (`quantization/quant.c` — `fe_quantize`/`fe_matmul_int8` per-tensor, `fe_quantize_per_channel`/`fe_matmul_int8_per_channel` per-channel; `fe_quantize_model` repacks 2-D MATMUL/LINEAR weights to per-channel INT8 in place, scales in the weight arena; `ex_matmul`/`ex_linear` branch on the weight dtype at run time to `fe_linear_int8`/`fe_matmul_int8_dyn` with dynamic activations). A calibration pipeline exists (`fe_runtime_calibrate`, `runtime/engine.c`) — it runs a sample set through `fe_runtime_run` and records per-tensor activation `max(|x|)` ranges; percentile/stat smoothing and static activation scales consumed by the engine are not built yet.
-- **INT16, FP16 and BF16 are seeded and API-complete but not engine-wired.** `fe_quantize_int16`/`fe_matmul_int16_dyn`/`fe_linear_int16` mirror the INT8 engine kernels (dynamic activations, per-channel weights); `core/fp16.c/h` adds `DTYPE_FLOAT16` and `DTYPE_BFLOAT16` storage (bit-exact conversion, `fe_f32_to_fp16`/`fe_fp16_to_f32` and `fe_f32_to_bf16`/`fe_bf16_to_f32`). The model-level repack and dispatch wiring are next steps.
+- **INT16, FP16 and BF16 are engine-wired.** `fe_quantize_int16`/`fe_matmul_int16_dyn`/`fe_linear_int16` mirror the INT8 engine kernels (dynamic activations, per-channel weights); `core/fp16.c/h` adds `DTYPE_FLOAT16` and `DTYPE_BFLOAT16` storage with upconvert-on-read kernel dispatch in `runtime/kernels.c` (half-precision weights upconverted to FP32 at run time).
 - **Parallel subsystem exists and is tested, but the engine hot path stays single-threaded.** `parallel/` ships a thread pool, a chunked row-parallel GEMM (`fe_matmul_parallel` — deterministic chunking, no shared mutable accumulator), and a ready-set DAG scheduler. `tests/test_parallel.c` covers pool partition, GEMM-vs-oracle equivalence, and scheduler causality.
 - **Compiler IR (Stage 14) exists and is tested.** `compiler/` lowers `FeGraph` → linear `FeIrProgram` (`fe_ir_lower`), dead-eliminates, resolves a static kernel table (`fe_ir_codegen`), and schedules producers-first (`fe_ir_schedule`); `fe_ir_run` executes the stream. `tests/test_compiler.c` proves IR output matches `fe_runtime_run` (≤1e-5) and the diamond schedule is causal.
-- **AVX2 vectorized path needs `N % 8 == 0`**; remainders fall back to scalar.
-- **Fixed capacities:** 512 nodes, 1024 tensors, 8 dims.
+- **CI, fuzz, and perf gates are authored artifacts.** `.github/workflows/ci.yml`
+  has seven legs (test, sanitize-ASan/UBSan-mandatory, fuzz, perf, coverage,
+  Pi QEMU cross, ESP32 IDF compile gate); `fuzz/` ships a libFuzzer entry +
+  standalone replayer; `tools/check_perf.py` diffs `bench_avx2 --json`
+  against `temps/bench_baseline.json` (**model-independent** — the acoustic
+  `bench_model` is deliberately not wired into automation). None of these are
+  locally verifiable on the Windows dev host; baseline regeneration and CI
+  observation are tracked.
+- **Ports: Pi Zero W and ESP32.** CMake toolchains + ESP-IDF component +
+  docs (`docs/pi-zero-w-port.md`, `docs/esp32-port.md`, `idf/README.md`).
+  Both compile out the host subsystems and x86 SIMD; ESP32 additionally drops
+  `DTYPE_FLOAT64` (load-time `FE_ERR_DTYPE`), sizes ceilings via a
+  `config/config.h` include override, and lowers `FERRITE_PLANNER_ALIGN` to
+  scalar natural alignment.
+- **AVX2 vectorized path needs `N % 8 == 0`** on the SIMD units; the kernels
+  split into a vectorized prefix + scalar tail so remainder shapes still win.
+- **Fixed-but-configurable capacities:** 512 nodes / 1024 tensors / 8 dims by
+  default, threadable per target via CMake cache vars (`FE_MAX_NODES`,
+  `FE_MAX_TENSORS`, `FERRITE_MAX_DIMS`, `FE_MAX_ALLOCS`,
+  `FERRITE_PLANNER_ALIGN`). AVX2-on-non-x86 is a CMake `FATAL_ERROR`, not a
+  silent downgrade.
 
 ---
 
