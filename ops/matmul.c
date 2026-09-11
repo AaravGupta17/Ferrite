@@ -1,3 +1,4 @@
+cat > ops/matmul.c << 'MATMULEOF'
 // ops/matmul.c
 #include "ops.h"
 #include "backend.h"
@@ -9,14 +10,14 @@
  *
  * This is the reference implementation — correct but not optimized.
  * It exists to validate correctness before we add SIMD kernels, and
- * serves as the fallback path on hardware without AVX2.
+ * serves as the fallback path on hardware without vector support.
  *
  * Memory access pattern:
  *   A[i][k] — row-major access, stride 1 in inner loop. Cache-friendly.
  *   B[k][j] — column access, stride N in inner loop. Cache-unfriendly.
  *
  * This is the fundamental matmul performance problem.
- * fe_matmul_avx2 (simd/matmul_avx2.c) fixes this with tiling.
+ * The active SIMD backend (simd/backend.h) fixes this with tiling.
  */
 FeStatus fe_matmul_scalar(const FeTensor *A, const FeTensor *B, FeTensor *C) {
     if (!A || !B || !C) return FE_ERR_NULL;
@@ -71,6 +72,23 @@ FeStatus fe_matmul_scalar(const FeTensor *A, const FeTensor *B, FeTensor *C) {
  * the table without touching ops/.
  */
 FeStatus fe_matmul(const FeTensor *A, const FeTensor *B, FeTensor *C) {
+    /*
+     * The active SIMD backend's tiled kernel packs an MC=64-row tile of A
+     * and an NR=8-col tile of B once, then reuses the packed B tile across
+     * every row in that A-tile — the packing cost is amortized over up to
+     * 64 rows of compute. With M == 1 there is exactly one row: zero
+     * reuse, so packing is pure overhead with nothing to amortize it
+     * against.
+     *
+     * Measured on AcousticLeakNet's post-flatten FC layer
+     * (M=1, K=65536, N=128): naive 1.79 ms vs. AVX2 5.65 ms — a 3.2x
+     * *regression*, not a speedup. Route M==1 straight to scalar, which
+     * is faster here and has no packing overhead to begin with.
+     */
+    if (A && A->ndim == 2 && A->shape[0] == 1) {
+        return fe_matmul_scalar(A, B, C);
+    }
+
     const FeSimdOps *ops = fe_simd_ops();
     if (ops->matmul) {
         FeStatus s = ops->matmul(A, B, C);
@@ -89,3 +107,4 @@ FeStatus fe_linear(const FeTensor *A, const FeTensor *W,
     /* C += b (broadcast) */
     return fe_bias_add(C, b, C);
 }
+MATMULEOF
