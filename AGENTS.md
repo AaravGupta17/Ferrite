@@ -34,7 +34,7 @@ ctest --test-dir build          # all tests, from anywhere
 |---|---|---|
 | `core/` | Universal data structures: strided tensors, arena allocator, serialization, logging, FP16 storage, shared types | `types.h`, `tensor.c/h`, `tensor_ser.c/h`, `allocator.c/h`, `log.c/h`, `fp16.c/h` |
 | `graph/` | Computation-graph IR, tensor registry, Kahn topological sort | `graph.c/h` |
-| `ops/` | Operator kernels: matmul, linear, relu, softmax, bias_add, conv1d (im2col) | `ops.h`, `matmul.c`, `activations.c`, `conv1d.c` |
+| `ops/` | Operator kernels: matmul/linear, elementwise, activations, math (exp/ln/pow), gemm/transpose, conv1d/conv2d (im2col), norms, pooling, sequence, reduce, rand, stability | `ops.h`, `matmul.c`, `activations.c`, `conv1d.c`, `conv2d.c`, `elementwise.c`, `gemm.c`, `math.c`, `norm.c`, `pool.c`, `sequence.c`, `reduce.c`, `rand.c`, `stability.c` |
 | `simd/` | AVX2 tiled matmul with runtime CPUID detection | `matmul_avx2.c/h`, `elementwise_avx2.c/h` |
 | `planner/` | Tensor-lifetime analysis + greedy buffer reuse | `memory_planner.c/h` |
 | `parallel/` | Thread pool, row-parallel GEMM, ready-set DAG scheduler | `threadpool.c/h`, `parallel_gemm.c/h`, `scheduler.c/h` |
@@ -106,13 +106,21 @@ Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the han
 - **Parallel subsystem exists and is tested, but the engine hot path stays single-threaded.** `parallel/` ships a thread pool, a chunked row-parallel GEMM (`fe_matmul_parallel` — deterministic chunking, no shared mutable accumulator), and a ready-set DAG scheduler. `tests/test_parallel.c` covers pool partition, GEMM-vs-oracle equivalence, and scheduler causality.
 - **Compiler IR (Stage 14) exists and is tested.** `compiler/` lowers `FeGraph` → linear `FeIrProgram` (`fe_ir_lower`), dead-eliminates, resolves a static kernel table (`fe_ir_codegen`), and schedules producers-first (`fe_ir_schedule`); `fe_ir_run` executes the stream. `tests/test_compiler.c` proves IR output matches `fe_runtime_run` (≤1e-5) and the diamond schedule is causal.
 - **CI, fuzz, and perf gates are authored artifacts.** `.github/workflows/ci.yml`
-  has seven legs (test, sanitize-ASan/UBSan-mandatory, fuzz, perf, coverage,
-  Pi QEMU cross, ESP32 IDF compile gate); `fuzz/` ships a libFuzzer entry +
+  has eight legs (test, sanitize-ASan/UBSan-mandatory, fuzz, perf, coverage,
+  Pi QEMU cross, ESP32 IDF compile gate, golden-vs-ONNX-Runtime);
+  `fuzz/` ships a libFuzzer entry +
   standalone replayer; `tools/check_perf.py` diffs `bench_avx2 --json`
   against `temps/bench_baseline.json` (**model-independent** — the acoustic
-  `bench_model` is deliberately not wired into automation). None of these are
-  locally verifiable on the Windows dev host; baseline regeneration and CI
-  observation are tracked.
+  `bench_model` is deliberately not wired into automation). CI legs need
+  observation on the Ubuntu runner; the **golden leg is locally verifiable**
+  on the Windows dev host via `tools/golden_compare.py --run-model
+  build/run_model` (onnxruntime + onnx pip packages).
+- **Golden correctness vs ONNX Runtime exists (Phase D).** `tools/golden_gen.py`
+  builds a four-model float32 zoo (MLP, mini-CNN, Conv+BN-fusion, LayerNorm
+  MLP) using only importer-mapped ops with ONNX-default Gemm attributes;
+  `tools/golden_compare.py` runs the same seeded input through ONNX Runtime
+  and Ferrite (`tools/run_model.c`, loading `.onnx` through the importer) and
+  asserts tolerance match — observed `max_abs ≈ 1e-8` with `mlp` bit-exact.
 - **Ports: Pi Zero W and ESP32.** CMake toolchains + ESP-IDF component +
   docs (`docs/pi-zero-w-port.md`, `docs/esp32-port.md`, `idf/README.md`).
   Both compile out the host subsystems and x86 SIMD; ESP32 additionally drops

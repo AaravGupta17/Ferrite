@@ -131,6 +131,17 @@ set(FE_MAX_NODES       512  CACHE STRING "Graph node ceiling")
 set(FE_MAX_TENSORS     1024 CACHE STRING "Tensor registry ceiling")
 set(FE_MAX_ALLOCS      1024 CACHE STRING "Planner allocation ceiling")
 
+# Planner tables are indexed by tensor index, so the allocation ceiling can
+# never be smaller than the registry ceiling. A device preset that overrides
+# one without the other is a configure-time error, not an OOB runtime
+# surprise. (The same invariant is enforced in planner/memory_planner.h by
+# a _Static_assert; this catches a misconfigured preset before compilation.)
+if(FE_MAX_ALLOCS LESS FE_MAX_TENSORS)
+    message(FATAL_ERROR "FE_MAX_ALLOCS (${FE_MAX_ALLOCS}) must be "
+                        ">= FE_MAX_TENSORS (${FE_MAX_TENSORS}): planner "
+                        "tables are indexed by tensor index")
+endif()
+
 # Activation-buffer alignment (Section 4.3): 64 keeps SIMD backends' loads/
 # stores aligned; a scalar-only device build (no SIMD backend) drops to the
 # natural scalar alignment to stop wasting padding. Must be a power of two.
@@ -423,3 +434,12 @@ target_link_libraries(bench_model PRIVATE
     ferrite_planner ferrite_runtime ferrite_importer ferrite_tools)
 target_compile_options(bench_model PRIVATE -O2)
 ferrite_exe(bench_model)
+
+# Golden runner (Phase D): load an ONNX model, feed one input .bin, write
+# one output .bin. Drives tools/golden_compare.py's Ferrite side.
+add_executable(run_model EXCLUDE_FROM_ALL tools/run_model.c)
+target_link_libraries(run_model PRIVATE
+    ferrite_core ferrite_graph ferrite_ops ferrite_simd
+    ferrite_planner ferrite_runtime ferrite_importer)
+target_compile_options(run_model PRIVATE -O2)
+ferrite_exe(run_model)

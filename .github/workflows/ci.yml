@@ -14,6 +14,8 @@
 #                  python3 tools/check_perf.py --current /tmp/cur.json \
 #                    --seed temps/bench_baseline.json --label linux-ci
 #   coverage   — gcov build + gcovr, per-file report, minimum line coverage.
+#   golden     — Ferrite vs ONNX Runtime on the tools/golden_models zoo:
+#                identical seeds through both runtimes, tolerance-matched.
 #
 # Honest-numbers rule: the perf leg reports build mode and CPU in its logs;
 # never tune the threshold (default 20%) to hide a real regression.
@@ -110,6 +112,31 @@ jobs:
             --baseline temps/bench_baseline.json \
             --label "linux-ci Release" \
             --threshold 0.20
+      - name: Upload measured output (for re-seeding baseline)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-linux-ci
+          path: /tmp/bench_current.json
+
+  golden:
+    name: golden vs ONNX Runtime (Phase D)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja + python deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build python3-pip
+          python3 -m pip install --quiet onnxruntime onnx numpy
+      - name: Configure + build run_model
+        run: |
+          cmake -S . -B build-golden -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-golden --target run_model
+      - name: Generate model zoo
+        run: python3 tools/golden_gen.py
+      - name: Compare Ferrite vs ONNX Runtime
+        run: |
+          python3 tools/golden_compare.py --run-model build-golden/run_model
 
   coverage:
     name: coverage gate (gcov)

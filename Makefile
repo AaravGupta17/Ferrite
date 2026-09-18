@@ -44,7 +44,7 @@ tests/test_allocator.o: tests/test_allocator.c core/allocator.h core/tensor.h
 test_ops: core/tensor.o ops/matmul.o ops/activations.o ops/elementwise.o ops/reduce.o ops/stability.o simd/matmul_avx2.o tests/test_ops.o
 	$(CC) $(CFLAGS) -o test_ops core/tensor.o ops/matmul.o ops/activations.o ops/elementwise.o ops/reduce.o ops/stability.o simd/matmul_avx2.o tests/test_ops.o -lm
 ops/matmul.o: ops/matmul.c ops/ops.h core/tensor.h core/types.h simd/matmul_avx2.h
-	$(CC) $(CFLAGS) -Isimd -c ops/matmul.c -o ops/matmul.
+	$(CC) $(CFLAGS) -Isimd -c ops/matmul.c -o ops/matmul.o
 
 ops/activations.o: ops/activations.c ops/ops.h core/tensor.h core/types.h
 	$(CC) $(CFLAGS) -c ops/activations.c -o ops/activations.o
