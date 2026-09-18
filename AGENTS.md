@@ -108,13 +108,17 @@ Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the han
 - **CI, fuzz, and perf gates are authored artifacts.** `.github/workflows/ci.yml`
   has eight legs (test, sanitize-ASan/UBSan-mandatory, fuzz, perf, coverage,
   Pi QEMU cross, ESP32 IDF compile gate, golden-vs-ONNX-Runtime);
-  `fuzz/` ships a libFuzzer entry +
+  `fuzz/` ships a libFuzzer entry (bridged via `fuzz_onnx_libfuzzer.c`) plus a
   standalone replayer; `tools/check_perf.py` diffs `bench_avx2 --json`
   against `temps/bench_baseline.json` (**model-independent** — the acoustic
-  `bench_model` is deliberately not wired into automation). CI legs need
-  observation on the Ubuntu runner; the **golden leg is locally verifiable**
-  on the Windows dev host via `tools/golden_compare.py --run-model
-  build/run_model` (onnxruntime + onnx pip packages).
+  `bench_model` is deliberately not wired into automation). All eight legs
+  are green on `main`; the perf baseline is seeded from the Linux Release
+  runner (matmul 4.78x / elementwise 3.92x / gemm 15.65x, 30% threshold, the
+  elementwise 200-pass window averaged against shared-runner jitter); the
+  ESP32 leg is a compile gate only (flashing is procedural in `docs/`); the
+  **golden leg is locally verifiable** on the Windows dev host via
+  `tools/golden_compare.py --run-model build/run_model` (onnxruntime + onnx
+  pip packages).
 - **Golden correctness vs ONNX Runtime exists (Phase D).** `tools/golden_gen.py`
   builds a four-model float32 zoo (MLP, mini-CNN, Conv+BN-fusion, LayerNorm
   MLP) using only importer-mapped ops with ONNX-default Gemm attributes;

@@ -131,6 +131,26 @@ under the versioning policy above.
 - **FEMD plan lifetimes**: the artifact serializes plan lifetimes; omitting
   them made `fe_plan_apply` fail to bind activation pointers after load
   (`fe_model_run` reported `FE_ERR_NULL` on every node).
+- **CI legs repaired and observed green (8/8 on `main`)**:
+  - *Fuzzer → libFuzzer bridge* (`fuzz/fuzz_onnx_libfuzzer.c`): the parser
+    entry is `fuzz_onnx_input`; a new shim exports `LLVMFuzzerTestOneInput`
+    (the symbol libFuzzer's `main()` calls), and the CMake probe now detects
+    Clang libFuzzer instead of always failing a duplicate-`main` link.
+  - *Perf gate honesty* (`tools/bench_avx2.c`): the bench timed the AVX2
+    kernel against itself (`fe_matmul` dispatches via CPUID) and against a
+    naive loop `-O3` optimizes away entirely. The scalar side is now pinned
+    down — `fe_matmul_scalar`'s i-k-j kernel and a plain add loop, both with
+    volatile stores so neither can be vectorized or folded — and the output
+    carries a naive-vs-AVX2 checksum agreement bar as a measurement-integrity
+    check. The baseline was re-seeded from the Linux Release runner
+    (matmul 4.78x / elementwise 3.92x / gemm 15.65x) at a 30% threshold,
+    with a 200-pass elementwise window to average out shared-runner jitter.
+  - *ESP32 component* (`idf/ferrite/CMakeLists.txt`): `FERRITE_ROOT`
+    resolution with a fallback for deeper component copies; `optim/
+    shape_infer.c` compiled on the device (the runtime re-infers shapes on
+    every plan build); `esp_timer` linked through the `PRIV_REQUIRES`
+    dependency graph instead of a bare `-lesp_timer` that no search path
+    resolved.
 
 ### Notes
 
@@ -142,5 +162,8 @@ under the versioning policy above.
 - Ports and CI legs are authored artifacts, per "Everything, artifacts for
   unverifiable": the sanitize/fuzz/perf/coverage/pi/esp legs are CI-only
   (no Linux runner, libFuzzer, ARM toolchain, or ESP-IDF on the dev host);
-  the Pi leg additionally runs the full suite under QEMU. Hardware-only
-  steps (ESP32 flashing) are procedural in `docs/*.md`.
+  the Pi leg additionally runs the full suite under QEMU; the golden leg is
+  locally verifiable with `onnxruntime` + `onnx` pip packages. All eight CI
+  legs are green on `main`; the perf baseline is seeded from the Ubuntu
+  runner, and the ESP32 leg is a compile gate only (flashing is procedural in
+  `docs/*.md`).

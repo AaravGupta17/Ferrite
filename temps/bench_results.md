@@ -4,7 +4,9 @@ Recorded benchmark numbers. Every number below is reproducible with the
 command shown. Build modes matter: the **Debug** build compiles the ops
 library at `-O0`, so `fe_matmul` is a true scalar reference; the **Release**
 build lets GCC auto-vectorize the naive loops, which changes the
-naive-vs-SIMD ratios. State the mode whenever you compare.
+naive-vs-SIMD ratios (*bench_avx2* compensates — its scalar side is pinned
+down with volatile stores, see the micro-benchmarks section). State the mode
+whenever you compare.
 
 Environment: AMD Ryzen 5 5600, MinGW GCC 16.2.0 (scoop), single thread.
 
@@ -59,23 +61,45 @@ AVX2 advantage survives only where the scalar fallback is genuinely scalar
 
 ## Micro-benchmarks (`bench_avx2`, Release)
 
-`cmake --build build-release --target bench_avx2 && ./build-release/bench_avx2`
+`cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DFERRITE_SANITIZE=OFF && cmake --build build-release --target bench_avx2 && ./build-release/bench_avx2`
 
-| Benchmark | naive | AVX2 | ratio |
+The "naive" timings are pinned-down scalar references. `fe_matmul` routes to
+the AVX2 backend at run time and `-O3` auto-vectorizes a plain naive loop, so
+measuring either would be AVX2-vs-AVX2 (this bit the first Linux baseline:
+matmul "speedup" 1.08x, elementwise 0.09x). The bench instead mirrors the
+i-k-j matmul and a plain add loop with volatile stores — un-vectorizable,
+un-foldable — and prints a naive-vs-AVX2 checksum agreement bar as a
+measurement-integrity check (that bar is not a test; `test_simd.c` is).
+
+### Windows dev host (Ryzen 5 5600, MinGW GCC 16.2.0, single thread)
+
+| Benchmark | naive (pinned scalar) | AVX2 | ratio |
 |---|---|---|---|
-| MatMul 256x256x256 | 1.25 ms (26.9 GFLOPS) | 1.32 ms (25.4 GFLOPS) | 0.9x |
-| Elementwise add, 1M floats | 0.03 ms | 0.17 ms (6.3 GFLOP/s) | 0.2x |
-| GEMM base (AVX2) vs transB (scalar) | 19.92 ms (scalar) | 1.30 ms (25.8 GFLOPS) | 15.3x |
+| MatMul 256x256x256 | 7.16 ms | 1.47 ms | 4.9x |
+| Elementwise add, 1M floats | 0.47 ms | 0.25 ms | 1.9x |
+| GEMM base (AVX2) vs transB (scalar) | 63.36 ms (scalar) | 1.33 ms | 47.5x |
 
-- At N=256 both matmul paths are bandwidth-limited and within 10% of each
-  other; GFLOPS numbers are memory-bound, not peak-FLOPS.
-- The GEMM row shows the real AVX2-vs-scalar gap (15.3x) because the
-  transB path (column access on B) cannot be auto-vectorized and stays a true
-  scalar fallback.
-- Elementwise naive at `-O3` is a fully auto-vectorized loop; the AVX2
-  kernel's scalar-tail overhead dominates at these sizes.
+(Sanitizer build — numbers are directional, ordering is real.)
 
-Note: these micro-benchmarks are not correctness checks — `test_simd.c` is.
+### Linux CI runner (ubuntu-latest Release, committed gate baseline)
+
+Recorded as `temps/bench_baseline.json` via `check_perf.py --seed`; the
+`perf` CI leg compares against these with a 30% threshold and uploads each
+run's JSON for re-seeding on runner/hardware changes.
+
+| Benchmark | naive (pinned scalar) | AVX2 | ratio |
+|---|---|---|---|
+| MatMul 256x256x256 | 6.92 ms | 1.45 ms | 4.78x |
+| Elementwise add, 1M floats | 0.75 ms | 0.19 ms | 3.92x |
+| GEMM base (AVX2) vs transB (scalar) | 22.09 ms (scalar) | 1.41 ms | 15.65x |
+
+- The GEMM row is the cleanest AVX2-vs-scalar picture: the transB path
+  (column access on B) cannot be auto-vectorized and is a genuine scalar
+  fallback, so the 15.7x gap is the tiling + SIMD win with no measurement
+  noise.
+- Elementwise at 3.9x is memory-bound headroom on 1M float buffers.
+- All three checksums agree between the pinned scalar and AVX2 kernels (the
+  bar is printed in non-JSON mode and echoed in `--json` output).
 
 ---
 

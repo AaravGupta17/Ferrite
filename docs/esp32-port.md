@@ -62,6 +62,8 @@ cmake --build build-esp32 --target ferrite_device
 
 - Locally unverifiable (no ESP-IDF toolchain on the dev host).
 - CI: `.github/workflows/ci.yml` **esp** leg builds `idf/demo` inside the
-  `espressif/idf` container (compile gate) — not a hardware run. The
-  `idf/demo` relu smoke test plus a quantized FEMD inference are manual
-  on-device steps.
+  `espressif/idf:5.4` container — green on `main`. It is a compile gate,
+  not a hardware run: it builds every object the component ships (complete
+  device op set, `optim/shape_infer.c`, `runtime/exec_plan.c`) and links the
+  app against `libferrite.a`. The `idf/demo` relu smoke test plus a
+  quantized FEMD inference are manual on-device steps.

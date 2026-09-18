@@ -43,6 +43,6 @@
 # - Profiler compiled out (esp_timer still available for app code).
 #
 # ## Verification status
-# The `esp` CI job builds this component under the espressif/idf container
-# (compile gate). End-to-end execution is hardware-only — docs/esp32-port.md
-# lists the on-device smoke test as a manual step.
+# The `esp` CI job builds this component inside the espressif/idf container
+# (compile gate) — green on `main`. End-to-end execution is hardware-only —
+# docs/esp32-port.md lists the on-device smoke test as a manual step.
