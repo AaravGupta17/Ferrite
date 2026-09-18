@@ -29,6 +29,7 @@ static double bench(FeStatus (*fn)(const FeTensor*, const FeTensor*, FeTensor*),
 }
 
 static double t_mm_naive, t_mm_avx2, t_ew_naive, t_ew_avx2, t_gemm_base, t_gemm_transb;
+static double t_ew_c_naive, t_ew_c_avx2;   /* elementwise checksums from both paths */
 
 static void bench_matmul(void) {
     int shape[] = {N, N};
@@ -40,8 +41,8 @@ static void bench_matmul(void) {
     for (int i = 0; i < N*N; i++) { a[i] = (float)i * 0.001f; }
     for (int i = 0; i < N*N; i++) { b[i] = (float)i * 0.001f; }
 
-    double t_naive = bench(fe_matmul,      A, B, C);
-    double t_avx2  = bench(fe_matmul_avx2, A, B, C);
+    double t_naive = bench(fe_matmul_scalar, A, B, C);
+    double t_avx2  = bench(fe_matmul_avx2,   A, B, C);
 
     t_mm_naive = t_naive;
     t_mm_avx2  = t_avx2;
@@ -55,7 +56,10 @@ static void bench_matmul(void) {
 }
 
 /* Elementwise: the AVX2 kernel (8-wide + scalar tail) runs on the same buffer
- * pair as a plain scalar loop — same FLOPs, same memory traffic. */
+ * pair as a plain scalar loop — same FLOPs, same memory traffic. The timed
+ * scalar loop's stores are dead (nothing reads o before free), so a -O3
+ * compiler can legally remove it; the checksum pass below forces the stores
+ * to stay materialized and doubles as a both-paths-agree sanity check. */
 static void bench_elementwise(void) {
     float *a = malloc(sizeof(float) * EW);
     float *b = malloc(sizeof(float) * EW);
@@ -67,19 +71,33 @@ static void bench_elementwise(void) {
     for (int r = 0; r < RUNS; r++) fe_add_avx2(a, b, o, EW);
     double t_avx2 = (now_ms() - start) / RUNS;
 
-    for (int i = 0; i < EW; i++) o[i] = a[i] + b[i];   /* warmup */
+    /* The naive reference: a plain scalar loop. Its stores are volatile so
+     * the optimizer cannot collapse the RUNS passes (each one writes the same
+     * o[] before anything reads it) or vectorize the loop — otherwise this
+     * "scalar" baseline silently becomes another AVX2 run. The checksum pass
+     * after timing then forces the stores to stay materialized. */
+    volatile float *ov = o;
+    for (int i = 0; i < EW; i++) ov[i] = a[i] + b[i];   /* warmup */
     start = now_ms();
     for (int r = 0; r < RUNS; r++)
-        for (int i = 0; i < EW; i++) o[i] = a[i] + b[i];
+        for (int i = 0; i < EW; i++) ov[i] = a[i] + b[i];
     double t_naive = (now_ms() - start) / RUNS;
+
+    /* Force the naive loop's stores to live (else they are dead), and check
+     * the two kernels agree: same data, sequential sum must match exactly. */
+    for (int i = 0; i < EW; i++) t_ew_c_naive += o[i];
+    fe_add_avx2(a, b, o, EW);
+    for (int i = 0; i < EW; i++) t_ew_c_avx2 += o[i];
 
     t_ew_naive = t_naive;
     t_ew_avx2  = t_avx2;
 
     double gflops = (double)EW / (t_avx2 * 1e6);
+    const char *agree = t_ew_c_naive == t_ew_c_avx2 ? "match" : "MISMATCH";
     if (json_mode) return;
-    printf("Elementwise add [%d]: naive %.2f ms, AVX2 %.2f ms (%.2f GFLOP/s), %.1fx\n",
-           EW, t_naive, t_avx2, gflops, t_naive / t_avx2);
+    printf("Elementwise add [%d]: naive %.2f ms, AVX2 %.2f ms (%.2f GFLOP/s), %.1fx (checksums %.9g vs %.9g: %s)\n",
+           EW, t_naive, t_avx2, gflops, t_naive / t_avx2,
+           t_ew_c_naive, t_ew_c_avx2, agree);
     free(a); free(b); free(o);
 }
 
@@ -137,6 +155,8 @@ int main(int argc, char **argv) {
         printf("  \"elem_naive_ms\": %.3f,\n", t_ew_naive);
         printf("  \"elem_avx2_ms\": %.3f,\n", t_ew_avx2);
         printf("  \"elem_speedup\": %.2f,\n", t_ew_naive / t_ew_avx2);
+        printf("  \"elem_naive_checksum\": %.6g,\n", t_ew_c_naive);
+        printf("  \"elem_avx2_checksum\": %.6g,\n", t_ew_c_avx2);
         printf("  \"gemm_base_ms\": %.3f,\n", t_gemm_base);
         printf("  \"gemm_transb_ms\": %.3f,\n", t_gemm_transb);
         printf("  \"gemm_speedup\": %.2f\n", t_gemm_transb / t_gemm_base);
