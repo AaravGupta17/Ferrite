@@ -2,10 +2,13 @@
 # runtime (Section 4.1).
 #
 # Compiles the scalar-only subset of Ferrite (core + graph + ops + simd-scalar
-# + planner + quant + runtime) with the host-only subsystems compiled out. It
-# is an ESP-IDF component: add this directory to EXTRA_COMPONENT_DIRS (or
-# IDF_COMPONENT_MANAGER managed-components) and `PRIV_REQUIRES ferrite` from
-# your app. See idf/README.md for the minimal project layout.
+# + planner + quant + runtime). optim/shape_infer.c is the one optimizer file
+# that comes along: the runtime re-infers shapes on every plan build, so the
+# rule table must be on the device too; the pass pipeline (fold/fusion/CSE/DCE)
+# stays compiled out via FERRITE_NO_OPTIM. It is an ESP-IDF component: add this
+# directory to EXTRA_COMPONENT_DIRS (or IDF_COMPONENT_MANAGER managed-components)
+# and `PRIV_REQUIRES ferrite` from your app. See idf/README.md for the minimal
+# project layout.
 
 # Resolve the Ferrite repository root. This file normally lives at
 # <repo>/idf/ferrite/, so two levels up from CMAKE_CURRENT_LIST_DIR is the
@@ -25,6 +28,7 @@ idf_component_register(
         "${FERRITE_ROOT}/core/fp16.c"
         "${FERRITE_ROOT}/core/platform_esp32.c"
         "${FERRITE_ROOT}/graph/graph.c"
+        "${FERRITE_ROOT}/optim/shape_infer.c"
         "${FERRITE_ROOT}/ops/matmul.c"
         "${FERRITE_ROOT}/ops/activations.c"
         "${FERRITE_ROOT}/ops/conv1d.c"
@@ -48,6 +52,7 @@ idf_component_register(
         config          # FIRST: device-sized core/config.h override
         "${FERRITE_ROOT}/core"
         "${FERRITE_ROOT}/graph"
+        "${FERRITE_ROOT}/optim"
         "${FERRITE_ROOT}/ops"
         "${FERRITE_ROOT}/simd"
         "${FERRITE_ROOT}/planner"

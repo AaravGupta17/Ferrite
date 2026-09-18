@@ -346,7 +346,8 @@ if(FERRITE_ENABLE_IMPORTER)
             FERRITE_HAVE_FUZZER)
         unset(CMAKE_REQUIRED_FLAGS)
         if(FERRITE_HAVE_FUZZER)
-            add_executable(fuzz_onnx_fuzzer EXCLUDE_FROM_ALL fuzz/fuzz_onnx.c)
+            add_executable(fuzz_onnx_fuzzer EXCLUDE_FROM_ALL
+                fuzz/fuzz_onnx.c fuzz/fuzz_onnx_libfuzzer.c)
             target_link_libraries(fuzz_onnx_fuzzer ferrite_core ferrite_graph ferrite_importer)
             target_compile_options(fuzz_onnx_fuzzer PRIVATE
                 -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -g)

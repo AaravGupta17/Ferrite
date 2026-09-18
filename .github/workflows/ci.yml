@@ -101,8 +101,7 @@ jobs:
       - name: Install ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Configure (Release)
-        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
-          -DFERRITE_SANITIZE=OFF
+        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DFERRITE_SANITIZE=OFF
       - name: Build bench_avx2
         run: cmake --build build-release --target bench_avx2
       - name: Measure

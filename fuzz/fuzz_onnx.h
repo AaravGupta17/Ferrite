@@ -2,8 +2,8 @@
  * fuzz/fuzz_onnx.h — shared entry for the ONNX-parser fuzz targets (Section 1.3).
  *
  * One implementation (`fuzz_onnx_input`, in fuzz_onnx.c) is wrapped two ways:
- *   - fuzz_onnx.c exports it as `LLVMFuzzerTestOneInput` for clang's libFuzzer
- *     (`-fsanitize=fuzzer,address,undefined`), and
+ *   - fuzz_onnx_libfuzzer.c bridges it to `LLVMFuzzerTestOneInput` for clang's
+ *     libFuzzer (`-fsanitize=fuzzer,address,undefined`), and
  *   - fuzz_main.c provides a standalone `main` that replays every file named
  *     on the command line through the same function, so non-Clang toolchains
  *     get the identical code path (used by CTest: `fuzz_runner` over fuzz/corpus
