@@ -426,6 +426,43 @@ static void test_exec_plan_static(void) {
            (unsigned long long)rt.exec.n_plan_builds);
 }
 
+/* A K-mismatched MatMul must make fe_runtime_run propagate the shape-infer
+ * failure (FE_ERR_SHAPE) at plan-build time. The old bug swallowed the error
+ * and let the planner run on a produced tensor sitting at `ndim == 0`, which
+ * wrote strides[-1] in fe_plan_apply. */
+static void test_shape_infer_error_propagates(void) {
+    FeGraph g;
+    fe_graph_init(&g);
+
+    int s_in[]  = {1, 4};
+    int s_bad[] = {5, 3};   /* K mismatch: 4 != 5 */
+    int t_in = fe_graph_add_tensor(&g, "input", DTYPE_FLOAT32, 2, s_in, 0);
+    int t_w  = fe_graph_add_tensor(&g, "w",     DTYPE_FLOAT32, 2, s_bad, 1);
+    int t_out= fe_graph_add_tensor(&g, "out",   DTYPE_FLOAT32, 2, s_bad, 0);
+
+    int mm_in[] = {t_in, t_w}; int mm_out[] = {t_out};
+    fe_graph_add_node(&g, "input", FE_OP_INPUT,  NULL, 0, &t_in, 1);
+    fe_graph_add_node(&g, "mm",    FE_OP_MATMUL, mm_in, 2, mm_out, 1);
+    fe_graph_add_node(&g, "output", FE_OP_OUTPUT, &t_out, 1, NULL, 0);
+
+    FeRuntime rt;
+    assert(fe_runtime_init(&rt, &g,
+                           weight_buf, WEIGHT_BUF_SIZE,
+                           act_buf,    ACT_BUF_SIZE) == FE_OK);
+    assert(fe_runtime_alloc_weights(&rt) == FE_OK);
+
+    FeTensor *input = fe_tensor_alloc(DTYPE_FLOAT32, 2, s_in);
+    FeTensor *output = fe_tensor_alloc(DTYPE_FLOAT32, 2, s_bad);
+    float in_data[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    memcpy(input->data, in_data, sizeof(in_data));
+
+    assert(fe_runtime_run(&rt, input, output) == FE_ERR_SHAPE);
+
+    fe_tensor_free(input);
+    fe_tensor_free(output);
+    printf("PASS test_shape_infer_error_propagates\n");
+}
+
 /* A single-node conv1d graph through the engine. Hand-computed:
  *   x [1,1,4] = {1,2,3,4}, w [1,1,2] = {0.5, 1.0}, b = {0.1}, stride 1, pad 0
  *   y[l] = x[l]*0.5 + x[l+1]*1.0 + 0.1  →  {2.6, 4.1, 5.6} */
@@ -707,6 +744,7 @@ int main(void) {
     test_activation_footprint_equals_plan();
     test_onnx_load_and_run();
     test_exec_plan_static();
+    test_shape_infer_error_propagates();
     test_conv1d_graph();
     test_batchnorm_graph();
     test_runtime_run_batch();

@@ -119,7 +119,10 @@ static FeStatus fold_node(FeGraph *g, FeNode *node, FeArena *arena) {
                              node->attrs.groupnorm.eps); break;
         case FE_OP_FLATTEN: {
             FeTensor *in = IN(0);
-            int shape[2] = { in->shape[0], fe_tensor_numel(in) / in->shape[0] };
+            if (in->ndim <= 0 || in->shape[0] <= 0) { s = FE_ERR_SHAPE; break; }
+            int total = fe_tensor_numel(in);
+            if (total % in->shape[0] != 0) { s = FE_ERR_SHAPE; break; }
+            int shape[2] = { in->shape[0], total / in->shape[0] };
             FeTensor *view = fe_tensor_reshape(in, 2, shape);
             if (!view) { s = FE_ERR_SHAPE; break; }
             s = fe_tensor_copy(OUT(0), view);

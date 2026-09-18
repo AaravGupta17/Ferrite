@@ -173,10 +173,38 @@ static void test_alignment(void) {
 
     printf("PASS test_alignment\n");
 }
+/* The planner indexes its tables (offsets, lifetimes) by tensor index, so
+ * the allocation ceiling must be at least the registry ceiling. Enforced at
+ * compile time by a _Static_assert in memory_planner.h (and at configure
+ * time by CMake); this test pins the invariant at runtime too, so a regressed
+ * override fails loudly in CI rather than silently writing tables OOB. */
+static void test_alloc_ceiling_invariants(void) {
+    assert(FE_MAX_ALLOCS >= FE_MAX_TENSORS);
+
+    FeGraph g;
+    fe_graph_init(&g);
+    int s[] = {1, 4};
+    int t_in  = fe_graph_add_tensor(&g, "in",  DTYPE_FLOAT32, 2, s, 0);
+    int t_w   = fe_graph_add_tensor(&g, "w",   DTYPE_FLOAT32, 2, s, 1);
+    int t_out = fe_graph_add_tensor(&g, "out", DTYPE_FLOAT32, 2, s, 0);
+    int mm_in[] = {t_in, t_w};
+    fe_graph_add_node(&g, "input",  FE_OP_INPUT,  NULL,    0, &t_in, 1);
+    fe_graph_add_node(&g, "mm",     FE_OP_MATMUL, mm_in,   2, &t_out, 1);
+    fe_graph_add_node(&g, "output", FE_OP_OUTPUT, &t_out,  1, NULL,   0);
+    assert(fe_graph_topo_sort(&g) == FE_OK);
+
+    FePlan plan;
+    assert(fe_plan_memory(&g, &plan) == FE_OK);
+    assert(plan.n_lifetimes <= FE_MAX_ALLOCS);
+    assert(plan.n_lifetimes <= FE_MAX_TENSORS);
+    printf("PASS test_alloc_ceiling_invariants (allocs=%d >= tensors=%d)\n",
+           (int)FE_MAX_ALLOCS, (int)FE_MAX_TENSORS);
+}
 int main(void) {
     test_linear_chain_reuse();
     test_plan_apply();
     test_alignment();
+    test_alloc_ceiling_invariants();
     printf("\nAll tests passed.\n");
     return 0;
 }

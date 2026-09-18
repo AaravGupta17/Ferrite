@@ -43,6 +43,7 @@ FeStatus fe_relu(const FeTensor *in, FeTensor *out) {
 FeStatus fe_softmax(const FeTensor *in, FeTensor *out) {
     if (!in || !out) return FE_ERR_NULL;
     if (in->dtype != DTYPE_FLOAT32) return FE_ERR_DTYPE;
+    if (in->ndim < 1) return FE_ERR_SHAPE;
     if (fe_tensor_numel(in) != fe_tensor_numel(out)) return FE_ERR_SHAPE;
 
     int rows = 1;
@@ -81,6 +82,7 @@ FeStatus fe_softmax(const FeTensor *in, FeTensor *out) {
 FeStatus fe_bias_add(const FeTensor *in, const FeTensor *bias, FeTensor *out) {
     if (!in || !bias || !out) return FE_ERR_NULL;
     if (in->dtype != DTYPE_FLOAT32) return FE_ERR_DTYPE;
+    if (in->ndim < 1 || bias->ndim < 1) return FE_ERR_SHAPE;
 
     int cols = in->shape[in->ndim - 1];
     if (bias->shape[0] != cols) return FE_ERR_SHAPE;

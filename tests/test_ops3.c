@@ -375,6 +375,33 @@ static void test_mha(void) {
     printf("PASS test_mha\n");
 }
 
+/* ---------------- Rank-guard regression (A5) ---------------- */
+
+/* fe_softmax and fe_bias_add read shape[ndim-1] — a rank-0 input used to
+ * read shape[-1] (out of bounds). They must reject it with FE_ERR_SHAPE. */
+static void test_rank_zero_rejected(void) {
+    int s2[] = {2}, s22[] = {2, 2};
+    FeTensor *in  = fe_tensor_alloc(DTYPE_FLOAT32, 2, s22);
+    FeTensor *bias = fe_tensor_alloc(DTYPE_FLOAT32, 1, s2);
+    FeTensor *out = fe_tensor_alloc(DTYPE_FLOAT32, 1, s2);
+    float dummy = 0.0f;
+
+    /* A rank-0 tensor (ndim == 0): constructed on the stack, data present. */
+    FeTensor r0;
+    memset(&r0, 0, sizeof(r0));
+    r0.dtype = DTYPE_FLOAT32;
+    r0.ndim  = 0;
+    r0.data  = &dummy;
+    r0.nbytes = 4;
+
+    assert(fe_softmax(&r0, out) == FE_ERR_SHAPE);
+    assert(fe_bias_add(&r0, bias, out) == FE_ERR_SHAPE);
+    assert(fe_bias_add(in, &r0, out) == FE_ERR_SHAPE);
+
+    fe_tensor_free(in); fe_tensor_free(bias); fe_tensor_free(out);
+    printf("PASS test_rank_zero_rejected\n");
+}
+
 int main(void) {
     test_exp_log_pow();
     test_activations();
@@ -388,6 +415,7 @@ int main(void) {
     test_attention();
     test_posenc();
     test_mha();
+    test_rank_zero_rejected();
     printf("\nAll Stage 3 op tests passed.\n");
     return 0;
 }

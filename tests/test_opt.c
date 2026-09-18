@@ -309,6 +309,67 @@ static void test_dead_elim(void) {
     printf("PASS test_dead_elim\n");
 }
 
+/* The graph output itself is an identity Transpose∘Transpose chain with no
+ * consumer of the outer output. simplify must NOT neuter the outer node: a
+ * graph output has no consumers to relink, so the node has to stay alive to
+ * keep producing it. The old bug rewrote it into an INPUT feed anyway,
+ * leaving the output with no producer (uninitialized data at run time). */
+static void test_terminal_identity_transpose_survives(void) {
+    FeGraph g;
+    fe_graph_init(&g);
+    int s_x[] = {3, 4};
+    int t_x = fe_graph_add_tensor(&g, "x",  DTYPE_FLOAT32, 2, s_x, 0);
+    int t_m = fe_graph_add_tensor(&g, "mid",DTYPE_FLOAT32, 2, s_x, 0);
+    int t_o = fe_graph_add_tensor(&g, "out",DTYPE_FLOAT32, 2, s_x, 0);
+
+    int a_in[] = {t_x}; int a_out[] = {t_m};
+    int b_in[] = {t_m}; int b_out[] = {t_o};
+    fe_graph_add_node(&g, "T1", FE_OP_TRANSPOSE, a_in, 1, a_out, 1);
+    int n_t2 = fe_graph_add_node(&g, "T2", FE_OP_TRANSPOSE, b_in, 1, b_out, 1);
+
+    assert(fe_pass_simplify(&g) == FE_OK);
+
+    /* The outer node must still be a producing TRANSPOSE, not a neutered
+     * INPUT feed, and its output must still be written by it. */
+    assert(g.nodes[n_t2].op == FE_OP_TRANSPOSE);
+    assert(g.nodes[n_t2].n_inputs == 1);
+
+    int produced_by_output = 0;
+    for (int i = 0; i < g.n_nodes; i++)
+        for (int o = 0; o < g.nodes[i].n_outputs; o++)
+            if (g.nodes[i].outputs[o] == t_o) produced_by_output++;
+    assert(produced_by_output >= 1);
+
+    printf("PASS test_terminal_identity_transpose_survives\n");
+}
+
+/* Zero-extent constant feeding FLATTEN: the fold must fail loudly
+ * (FE_ERR_SHAPE), not integer-divide-by-zero when computing the second
+ * reshape dimension. */
+static void test_fold_flatten_zero_extent(void) {
+    FeGraph g;
+    fe_graph_init(&g);
+    static unsigned char wbuf[4096] __attribute__((aligned(64)));
+    FeArena arena;
+    fe_arena_init(&arena, wbuf, sizeof(wbuf));
+
+    int s0[] = {0, 4};
+    int t_w   = fe_graph_add_tensor(&g, "w",   DTYPE_FLOAT32, 2, s0, 0);
+    int t_out = fe_graph_add_tensor(&g, "out", DTYPE_FLOAT32, 2, s0, 0);
+    static float dummy;   /* zero-extent tensor: data is unused, never NULL */
+    g.tensors[t_w].is_weight = 1;
+    g.tensors[t_w].tensor = fe_tensor_from_data(&dummy, DTYPE_FLOAT32, 2, s0);
+    assert(g.tensors[t_w].tensor);
+
+    int q_in[] = {t_w}; int q_out[] = {t_out};
+    fe_graph_add_node(&g, "flat", FE_OP_FLATTEN, q_in, 1, q_out, 1);
+
+    /* shape[0] == 0 → the old code divided by zero; the guard turns it into
+     * a loud FE_ERR_SHAPE instead. */
+    assert(fe_pass_fold_constants(&g, &arena) == FE_ERR_SHAPE);
+    printf("PASS test_fold_flatten_zero_extent\n");
+}
+
 /* ------------------------------------------------------------------ */
 /* End-to-end: Conv+BN before vs after fe_optimize                     */
 
@@ -451,6 +512,8 @@ int main(void) {
     test_matmul_k_mismatch();
     test_fold_transpose_weight();
     test_simplify_identities();
+    test_terminal_identity_transpose_survives();
+    test_fold_flatten_zero_extent();
     test_cse_dedup();
     test_dead_elim();
     test_conv_bn_equivalence();

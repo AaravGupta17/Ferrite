@@ -215,6 +215,7 @@ static FeStatus parse_initializer(FePbReader *r, FeGraph *g,
 
     /* Find or register this tensor in the graph */
     int tidx = find_or_add_tensor(g, name);
+    if (tidx < 0) { free(fvals); return FE_ERR_NOMEM; }
     FeTensorEntry *e = &g->tensors[tidx];
     e->ndim      = ndim;
     e->dtype     = DTYPE_FLOAT32;
@@ -456,15 +457,21 @@ static FeStatus parse_node(FePbReader *r, FeGraph *g) {
             case 1: {
                 char tname[FE_NAME_LEN];
                 pb_string(r, tname, FE_NAME_LEN);
-                if (n_in < FE_MAX_NODE_INPUTS)
-                    inputs[n_in++] = find_or_add_tensor(g, tname);
+                if (n_in < FE_MAX_NODE_INPUTS) {
+                    int t = find_or_add_tensor(g, tname);
+                    if (t < 0) return FE_ERR_NOMEM;   /* registry exhausted */
+                    inputs[n_in++] = t;
+                }
                 break;
             }
             case 2: {
                 char tname[FE_NAME_LEN];
                 pb_string(r, tname, FE_NAME_LEN);
-                if (n_out < FE_MAX_NODE_OUTPUTS)
-                    outputs[n_out++] = find_or_add_tensor(g, tname);
+                if (n_out < FE_MAX_NODE_OUTPUTS) {
+                    int t = find_or_add_tensor(g, tname);
+                    if (t < 0) return FE_ERR_NOMEM;   /* registry exhausted */
+                    outputs[n_out++] = t;
+                }
                 break;
             }
             case 3: pb_string(r, node_name, FE_NAME_LEN); break;
@@ -674,6 +681,7 @@ static FeStatus parse_value_info(FePbReader *r, FeGraph *g) {
     /* Fill the graph entry for this name. */
     if (name[0] != '\0') {
         int tidx = find_or_add_tensor(g, name);
+        if (tidx < 0) return FE_ERR_NOMEM;
         FeTensorEntry *e = &g->tensors[tidx];
         if (have_shape && ndim > 0) {
             e->ndim = ndim;

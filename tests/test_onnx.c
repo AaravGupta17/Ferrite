@@ -514,6 +514,54 @@ static void test_float_data_initializers(void) {
     printf("PASS test_float_data_initializers\n");
 }
 
+/* Registry exhaustion: a model declaring more unique tensors than
+ * FE_MAX_TENSORS must fail with FE_ERR_NOMEM, never leak a -1 tensor index
+ * into the graph (which previously dereferenced g->tensors[-1]). */
+static void test_registry_exhaustion_fails_loudly(void) {
+    const int N = FE_MAX_TENSORS + 1;   /* one past the registry ceiling */
+    unsigned char (*vis)[256] = malloc((size_t)N * 256);
+    size_t *vil = malloc((size_t)N * sizeof(size_t));
+    assert(vis && vil);
+
+    int s1[] = {1};
+    for (int i = 0; i < N; i++) {
+        char name[24];
+        snprintf(name, sizeof(name), "t_%d", i);
+        vil[i] = build_value_info(name, s1, 1, vis[i], 256);
+    }
+
+    unsigned char *graph = malloc((size_t)N * 64 + 128);
+    assert(graph);
+    begin_tmp();
+    for (int i = 0; i < N; i++)
+        wr_len_delimited(13, vis[i], vil[i]);   /* GraphProto.value_info */
+    size_t graph_len = tmp_drain(graph, (size_t)N * 64 + 128);
+
+    unsigned char *model = malloc(graph_len + 64);
+    assert(model);
+    begin_tmp();
+    wr_len_delimited(7, graph, graph_len);      /* ModelProto.graph */
+    size_t lm = tmp_drain(model, graph_len + 64);
+
+    FILE *f = fopen("tests/exhaust.onnx", "wb");
+    assert(f);
+    fwrite(model, 1, lm, f);
+    fclose(f);
+
+    FeGraph g;
+    FeArena weight_arena;
+    fe_arena_init(&weight_arena, weight_buf, WEIGHT_BUF_SIZE);
+    FeStatus s = fe_onnx_load(&g, &weight_arena, "tests/exhaust.onnx");
+    assert(s == FE_ERR_NOMEM);
+
+    remove("tests/exhaust.onnx");
+    free(vis);
+    free(vil);
+    free(graph);
+    free(model);
+    printf("PASS test_registry_exhaustion_fails_loudly\n");
+}
+
 /* Deterministic parser fuzz: every truncated prefix of a real model plus
  * random byte flips must either load a valid graph or fail loudly — never
  * overrun, hang, or crash. (The hardening that makes this safe lives in
@@ -587,6 +635,7 @@ int main(void) {
     test_pool_and_norm_attrs();
     test_malformed_node_len_fails();
     test_float_data_initializers();
+    test_registry_exhaustion_fails_loudly();
     test_parser_fuzz();
     printf("\nAll tests passed.\n");
     return 0;

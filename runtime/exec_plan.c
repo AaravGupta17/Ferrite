@@ -46,11 +46,15 @@ static void reset_produced_shapes(FeGraph *g, int in_tidx,
  * is seeded from the caller's tensor shape; once identified as dynamic it is
  * re-seeded on every plan build (force_dynamic), because the first seed
  * overwrites the zero marker. Static inputs (ONNX value_info) are untouched.
- * Returns 1 when the graph input is dynamic.
+ * Sets *is_dynamic = 1 when the graph input is dynamic. Shape-inference
+ * failure propagates loudly instead of leaving produced tensors at ndim == 0
+ * (a 0-dim tensor would make the planner write strides[-1]).
  */
-static int infer_shapes(FeRuntime *rt, const FeTensor *input,
-                        int force_dynamic) {
+static FeStatus infer_shapes(FeRuntime *rt, const FeTensor *input,
+                             int force_dynamic, int *is_dynamic) {
     FeGraph *g = rt->graph;
+    FeStatus s;
+    *is_dynamic = 0;
 
     int in_tidx = find_graph_input(g);
     if (in_tidx >= 0) {
@@ -61,11 +65,14 @@ static int infer_shapes(FeRuntime *rt, const FeTensor *input,
             e->ndim = input->ndim;
             memcpy(e->shape, input->shape, input->ndim * sizeof(int));
         }
-        fe_infer_shapes(g);
-        return dynamic;
+        s = fe_infer_shapes(g);
+        if (s != FE_OK) return s;
+        *is_dynamic = dynamic;
+        return FE_OK;
     }
-    fe_infer_shapes(g);
-    return 0;
+    s = fe_infer_shapes(g);
+    if (s != FE_OK) return s;
+    return FE_OK;
 }
 
 /* Copy the final output into the caller's buffer. Order: OUTPUT-node input,
@@ -136,7 +143,9 @@ FeStatus fe_exec_run(FeExecPlan *ep, FeRuntime *rt,
         int save_shape[FERRITE_MAX_DIMS];
         reset_produced_shapes(g, in_tidx, &save_ndim, save_shape);
 
-        int dynamic = infer_shapes(rt, input, ep->input_dynamic);
+        int dynamic = 0;
+        s = infer_shapes(rt, input, ep->input_dynamic, &dynamic);
+        if (s != FE_OK) return s;
         ep->input_dynamic |= dynamic;
         s = fe_plan_memory(g, &ep->plan);
         if (s != FE_OK) return s;

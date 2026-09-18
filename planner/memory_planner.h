@@ -10,6 +10,14 @@
 /* FE_MAX_ALLOCS (planner allocation ceiling) comes from core/config.h via
  * types.h, itself included above. */
 
+/* The planner indexes its tables by tensor index, so the allocation ceiling
+ * can never be smaller than the registry ceiling. A device preset that
+ * overrides one without the other is a build-time error, not an OOB runtime
+ * surprise. */
+_Static_assert(FE_MAX_ALLOCS >= FE_MAX_TENSORS,
+               "FE_MAX_ALLOCS must be >= FE_MAX_TENSORS (planner tables "
+               "are indexed by tensor index)");
+
 /*
  * Lifetime of a single tensor in the graph.
  * Expressed as indices into the topological order.

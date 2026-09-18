@@ -49,7 +49,11 @@ FeStatus fe_pass_simplify(FeGraph *g) {
             int out0 = node->outputs[0];
 
             if (node->op == FE_OP_TRANSPOSE) {
-                /* Identity iff the producer is also a transpose. */
+                /* Identity iff the producer is also a transpose. When this
+                 * node's output is the graph output (no consumers), it must
+                 * stay alive to keep writing it — only a genuine consumer
+                 * can be redirected past the identity. */
+                if (count_consumers(g, out0) == 0) continue;
                 for (int p = 0; p < g->n_nodes; p++) {
                     FeNode *prod = &g->nodes[p];
                     if (prod->op != FE_OP_TRANSPOSE) continue;
@@ -57,8 +61,7 @@ FeStatus fe_pass_simplify(FeGraph *g) {
                         if (prod->outputs[o] == in0 &&
                             count_consumers(g, in0) == 1) {
                             /* node(prod(x)) == x */
-                            if (count_consumers(g, out0) != 0)
-                                relink_consumers(g, out0, prod->inputs[0]);
+                            relink_consumers(g, out0, prod->inputs[0]);
                             node->op = FE_OP_INPUT;
                             node->n_inputs = 0;
                             changed = 1;
@@ -67,9 +70,9 @@ FeStatus fe_pass_simplify(FeGraph *g) {
                     if (changed) break;
                 }
             } else { /* FLATTEN: identity when the input is already 2D */
-                if (g->tensors[in0].ndim == 2) {
-                    if (count_consumers(g, out0) != 0)
-                        relink_consumers(g, out0, in0);
+                if (g->tensors[in0].ndim == 2 &&
+                    count_consumers(g, out0) != 0) {
+                    relink_consumers(g, out0, in0);
                     node->op = FE_OP_INPUT;
                     node->n_inputs = 0;
                     changed = 1;
