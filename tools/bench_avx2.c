@@ -28,6 +28,37 @@ static double bench(FeStatus (*fn)(const FeTensor*, const FeTensor*, FeTensor*),
     return (now_ms() - start) / RUNS;
 }
 
+/* Scalar reference: the same i-k-j body as fe_matmul_scalar, but its stores
+ * go through a volatile pointer. fe_matmul_scalar lives in a -O3 TU, so the
+ * compiler auto-vectorizes the real kernel and the "naive" timing would
+ * secretly be another AVX2 run; a volatile store cannot be vectorized or
+ * eliminated, pinning this down to true scalar throughput as written. */
+static FeStatus matmul_scalar_pinned(const FeTensor *A, const FeTensor *B,
+                                     FeTensor *C) {
+    if (!A || !B || !C) return FE_ERR_NULL;
+    if (A->ndim != 2 || B->ndim != 2 || C->ndim != 2) return FE_ERR_SHAPE;
+    int m = A->shape[0];
+    int k = A->shape[1];
+    int n = B->shape[1];
+    if (B->shape[0] != k || C->shape[0] != m || C->shape[1] != n)
+        return FE_ERR_SHAPE;
+    if (A->dtype != DTYPE_FLOAT32 || B->dtype != DTYPE_FLOAT32 ||
+        C->dtype != DTYPE_FLOAT32) return FE_ERR_DTYPE;
+
+    const float *a = (const float *)A->data;
+    const float *b = (const float *)B->data;
+    volatile float *c = (volatile float *)C->data;
+    memset(C->data, 0, (size_t)m * n * sizeof(float));
+
+    for (int i = 0; i < m; i++)
+        for (int j = 0; j < k; j++) {
+            float a_ij = a[i * k + j];
+            for (int l = 0; l < n; l++)
+                c[i * n + l] += a_ij * b[j * n + l];
+        }
+    return FE_OK;
+}
+
 static double t_mm_naive, t_mm_avx2, t_ew_naive, t_ew_avx2, t_gemm_base, t_gemm_transb;
 static double t_ew_c_naive, t_ew_c_avx2;   /* elementwise checksums from both paths */
 
@@ -41,8 +72,8 @@ static void bench_matmul(void) {
     for (int i = 0; i < N*N; i++) { a[i] = (float)i * 0.001f; }
     for (int i = 0; i < N*N; i++) { b[i] = (float)i * 0.001f; }
 
-    double t_naive = bench(fe_matmul_scalar, A, B, C);
-    double t_avx2  = bench(fe_matmul_avx2,   A, B, C);
+    double t_naive = bench(matmul_scalar_pinned, A, B, C);
+    double t_avx2  = bench(fe_matmul_avx2, A, B, C);
 
     t_mm_naive = t_naive;
     t_mm_avx2  = t_avx2;
