@@ -1,10 +1,11 @@
-// idf/demo/main/main.c — ESP32 smoke smoke demo: run one inference through the
+// idf/demo/main/main.c — ESP32 smoke demo: run one inference through the
 // Ferrite device runtime on hardware (Section 4.5).
 //
 // The graph is built by hand (relu over a 2-element tensor) so the demo has
 // no dependency on the host importer/compiler. It proves init -> plan -> walk
-// works on the part. Replace the kernels with your compiled FEMD model header
-// for the real workload.
+// works on the part, and that a second inference with changed input reuses
+// the cached memory plan (no re-analysis). Replace the hand-built graph with
+// your compiled FEMD model header for the real workload.
 
 #include <stdio.h>
 #include <string.h>
@@ -48,10 +49,11 @@ void app_main(void) {
     }
 
     FeTensor *input = fe_tensor_alloc(DTYPE_FLOAT32, 2, s_in);
+    FeTensor *output = fe_tensor_alloc(DTYPE_FLOAT32, 2, s_out);
+
     float in_data[] = { -1.0f, 3.25f };
     memcpy(input->data, in_data, sizeof(in_data));
 
-    FeTensor *output = fe_tensor_alloc(DTYPE_FLOAT32, 2, s_out);
     if (fe_runtime_run(&rt, input, output) != FE_OK) {
         printf("Ferrite: run failed\n");
         fe_tensor_free(input);
@@ -61,6 +63,19 @@ void app_main(void) {
 
     float *o = (float *)output->data;
     printf("Ferrite ESP32 smoke: relu output = [%f, %f] (expect 0.000, 3.250)\n",
+           o[0], o[1]);
+
+    /* Second inference with different input: same shape, so the runtime must
+     * reuse the cached static plan — zero re-analysis on the part. */
+    float in_data2[] = { -0.5f, -0.25f };
+    memcpy(input->data, in_data2, sizeof(in_data2));
+    if (fe_runtime_run(&rt, input, output) != FE_OK) {
+        printf("Ferrite: second run failed\n");
+        fe_tensor_free(input);
+        fe_tensor_free(output);
+        return;
+    }
+    printf("Ferrite ESP32 smoke: second relu output = [%f, %f] (expect 0.000, 0.000)\n",
            o[0], o[1]);
 
     fe_tensor_free(input);
