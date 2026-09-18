@@ -9,7 +9,9 @@
 #                persistent corpus (fuzz/corpus). Fails on crash/sanitizer trip.
 #   perf       — Release bench_avx2 vs committed temps/bench_baseline.json
 #                (model-independent microbench; the acoustic model is not part
-#                of the gate).  Re-seed the baseline with:
+#                of the gate). Built with FERRITE_SANITIZE=OFF: the numbers
+#                must measure optimized code, not an instrumented build.
+#                Re-seed the baseline with:
 #                  bench_avx2 --json > /tmp/cur.json
 #                  python3 tools/check_perf.py --current /tmp/cur.json \
 #                    --seed temps/bench_baseline.json --label linux-ci
@@ -74,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install ninja
-        run: sudo apt-get update && sudo apt-get install -y ninja-build clang
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang libclang-rt-dev
       - name: Configure (Clang)
         run: cmake -S . -B build-fuzz -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Debug
       - name: Build fuzzer
@@ -99,7 +101,8 @@ jobs:
       - name: Install ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Configure (Release)
-        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          -DFERRITE_SANITIZE=OFF
       - name: Build bench_avx2
         run: cmake --build build-release --target bench_avx2
       - name: Measure
@@ -168,8 +171,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu
-        run: sudo apt-get update && sudo apt-get install -y ninja-build \
-          gcc-arm-linux-gnueabihf qemu-user-static
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build qemu-user-static
+          # armhf cross gcc: metapackage in noble main, but the runner's mirror
+          # occasionally flubs it — fall back to the versioned handle which is
+          # always in universe.
+          sudo apt-get install -y gcc-arm-linux-gnueabihf \
+            || sudo apt-get install -y gcc-13-arm-linux-gnueabihf
       - name: Configure (cross)
         run: cmake -S . -B build-pi -G Ninja \
           -DCMAKE_TOOLCHAIN_FILE=cmake/raspberry-pi-zero-w.toolchain.cmake
@@ -184,7 +193,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build ferrite IDF component (compile gate)
-        uses: docker://espressif/idf:latest
+        uses: docker://espressif/idf:v5.4
         with:
           args: bash -c "cd idf/demo && idf.py set-target esp32s3 && idf.py build"
       - name: Platform seam parity check

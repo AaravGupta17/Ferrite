@@ -367,6 +367,7 @@ static void test_fold_flatten_zero_extent(void) {
     /* shape[0] == 0 → the old code divided by zero; the guard turns it into
      * a loud FE_ERR_SHAPE instead. */
     assert(fe_pass_fold_constants(&g, &arena) == FE_ERR_SHAPE);
+    fe_tensor_free(g.tensors[t_w].tensor);   /* from_data mallocs the struct */
     printf("PASS test_fold_flatten_zero_extent\n");
 }
 

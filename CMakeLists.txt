@@ -334,8 +334,16 @@ if(FERRITE_ENABLE_IMPORTER)
 
     include(CheckCSourceCompiles)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # Probe for the libFuzzer runtime. check_c_source_compiles links the
+        # probe as an executable, and -fsanitize=fuzzer supplies its own main(),
+        # so the probe must NOT define main() (a plain "int main(...)" body
+        # yields a duplicate-symbol link error and the target is never built).
+        # A mainless TU that only defines the fuzzer entry point links exactly
+        # when the runtime is present.
         set(CMAKE_REQUIRED_FLAGS "-fsanitize=fuzzer,address,undefined")
-        check_c_source_compiles("int main(void){return 0;}" FERRITE_HAVE_FUZZER)
+        check_c_source_compiles(
+            "#include <stddef.h>\nint LLVMFuzzerTestOneInput(const unsigned char *data, size_t size){ (void)data; (void)size; return 0; }"
+            FERRITE_HAVE_FUZZER)
         unset(CMAKE_REQUIRED_FLAGS)
         if(FERRITE_HAVE_FUZZER)
             add_executable(fuzz_onnx_fuzzer EXCLUDE_FROM_ALL fuzz/fuzz_onnx.c)

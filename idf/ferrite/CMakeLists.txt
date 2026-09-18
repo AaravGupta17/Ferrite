@@ -7,8 +7,15 @@
 # IDF_COMPONENT_MANAGER managed-components) and `PRIV_REQUIRES ferrite` from
 # your app. See idf/README.md for the minimal project layout.
 
-# Resolve the Ferrite repository root (this file is idf/ferrite/CMakeLists.txt).
-get_filename_component(FERRITE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+# Resolve the Ferrite repository root. This file normally lives at
+# <repo>/idf/ferrite/, so two levels up from CMAKE_CURRENT_LIST_DIR is the
+# repo root (matches both the documented `cd idf/demo` flow and the CI docker
+# mount layout that puts the repo at /github/workspace). Fall back one more
+# level for setups that copy the component one directory deeper.
+get_filename_component(FERRITE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+if(NOT EXISTS "${FERRITE_ROOT}/core/types.h")
+    get_filename_component(FERRITE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+endif()
 
 idf_component_register(
     SRCS
