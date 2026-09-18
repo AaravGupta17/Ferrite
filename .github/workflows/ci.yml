@@ -11,6 +11,8 @@
 #                (model-independent microbench; the acoustic model is not part
 #                of the gate). Built with FERRITE_SANITIZE=OFF: the numbers
 #                must measure optimized code, not an instrumented build.
+#                Threshold 30%: shared runners jitter co-tenancy/frequency
+#                scaling beyond 20% on the sub-ms elementwise window.
 #                Re-seed the baseline with:
 #                  bench_avx2 --json > /tmp/cur.json
 #                  python3 tools/check_perf.py --current /tmp/cur.json \
@@ -114,7 +116,7 @@ jobs:
             --current /tmp/bench_current.json \
             --baseline temps/bench_baseline.json \
             --label "linux-ci Release" \
-            --threshold 0.20
+            --threshold 0.30
       - name: Upload measured output (for re-seeding baseline)
         if: always()
         uses: actions/upload-artifact@v4

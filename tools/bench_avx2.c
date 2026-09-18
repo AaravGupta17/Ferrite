@@ -11,6 +11,10 @@
 #define N    256
 #define RUNS 20
 #define EW    (1 << 20)   /* 1M floats per elementwise bench */
+/* Elementwise runs far faster than the matmul benches (~0.2 ms/call), so it
+ * needs a much longer window than RUNS to out-average runner frequency
+ * scaling and co-tenancy noise; otherwise the perf gate trips on jitter. */
+#define EW_RUNS 200
 
 static int json_mode = 0;
 
@@ -99,8 +103,8 @@ static void bench_elementwise(void) {
 
     fe_add_avx2(a, b, o, EW);   /* warmup */
     double start = now_ms();
-    for (int r = 0; r < RUNS; r++) fe_add_avx2(a, b, o, EW);
-    double t_avx2 = (now_ms() - start) / RUNS;
+    for (int r = 0; r < EW_RUNS; r++) fe_add_avx2(a, b, o, EW);
+    double t_avx2 = (now_ms() - start) / EW_RUNS;
 
     /* The naive reference: a plain scalar loop. Its stores are volatile so
      * the optimizer cannot collapse the RUNS passes (each one writes the same
@@ -110,9 +114,9 @@ static void bench_elementwise(void) {
     volatile float *ov = o;
     for (int i = 0; i < EW; i++) ov[i] = a[i] + b[i];   /* warmup */
     start = now_ms();
-    for (int r = 0; r < RUNS; r++)
+    for (int r = 0; r < EW_RUNS; r++)
         for (int i = 0; i < EW; i++) ov[i] = a[i] + b[i];
-    double t_naive = (now_ms() - start) / RUNS;
+    double t_naive = (now_ms() - start) / EW_RUNS;
 
     /* Force the naive loop's stores to live (else they are dead), and check
      * the two kernels agree: same data, sequential sum must match exactly. */
