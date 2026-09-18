@@ -448,11 +448,11 @@ This is the classic symmetric INT8 scheme used in early quantized ONNX runtimes;
 
 **Calibration pipeline.** `fe_runtime_calibrate` (`runtime/engine.c`) runs a caller-provided sample set through `fe_runtime_run` and records, for every non-weight float tensor (inputs and activations), the maximum |x| observed across the samples into a `graph->n_tensors`-entry `ranges` array. It is the data-collection half of calibration: the ranges are what a static-activation-scale build consumes (the engine today quantizes activations dynamically per run). No percentile/stat-smoothing pass over the observed ranges exists yet.
 
-**INT16, FP16 and BF16 paths.** All are seeded, tested, and API-complete but not wired into the engine dispatch (INT8 remains the engine path):
+**INT16, FP16 and BF16 paths.** All are engine-wired. `ex_matmul`/`ex_linear` (`runtime/kernels.c`) branch on the weight tensor's dtype at run time: an `DTYPE_INT16` weight routes to `fe_matmul_int16_dyn`/`fe_linear_int16`; a half-precision weight (`DTYPE_FLOAT16`/`DTYPE_BFLOAT16`) is upconverted to an FP32 shadow once and runs the float kernel; INT8 (the classic scheme below) routes to the dynamic/static INT8 kernels. The engine quantizes activations dynamically per run unless a recorded static activation scale (`act_scale > 0`) selects the single-pass static kernel:
 
 - `fe_quantize_int16` — symmetric per-tensor INT16 quantization (`scale = max|x|/32767`).
 - `fe_matmul_int16_dyn` / `fe_linear_int16` — dynamic-activation-quant INT16 GEMM/Linear with per-channel weights, mirroring the INT8 engine kernels.
-- `fe_f32_to_fp16`/`fe_fp16_to_f32`, `fe_f32_to_bf16`/`fe_bf16_to_f32`, and `DTYPE_FLOAT16`/`DTYPE_BFLOAT16` — storage-only half precision (see the `core/` section). An INT16/half model-level repack (`fe_quantize_model` analog) and engine dispatch wiring are the next steps.
+- `fe_f32_to_fp16`/`fe_fp16_to_f32`, `fe_f32_to_bf16`/`fe_bf16_to_f32`, and `DTYPE_FLOAT16`/`DTYPE_BFLOAT16` — storage-only half precision (see the `core/` section). An INT16/half model-level repack (`fe_quantize_model` analog) is the natural next step.
 
 ---
 

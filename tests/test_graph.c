@@ -100,6 +100,22 @@ static void test_topo_diamond(void) {
     printf("PASS test_topo_diamond\n");
 }
 
+static void test_validate_accepts_all_supported_dtypes(void) {
+    /* Phase B: validation accepts every dtype the engine can execute —
+     * INT16 quantized weights, FP16/BF16 storage-only weights. */
+    FeGraph g;
+    fe_graph_init(&g);
+    int s[] = {1, 4};
+    int t0 = fe_graph_add_tensor(&g, "w_i16",  DTYPE_INT16,    2, s, 1);
+    int t1 = fe_graph_add_tensor(&g, "w_f16",  DTYPE_FLOAT16,  2, s, 1);
+    int t2 = fe_graph_add_tensor(&g, "w_bf16", DTYPE_BFLOAT16, 2, s, 1);
+    int in0[] = {};
+    int out0[] = {t0, t1, t2};
+    fe_graph_add_node(&g, "n0", FE_OP_INPUT, in0, 0, out0, 3);
+    assert(fe_graph_validate(&g) == FE_OK);
+    printf("PASS test_validate_accepts_all_supported_dtypes\n");
+}
+
 static void test_validate_passes_on_valid_graph(void) {
     FeGraph g;
     fe_graph_init(&g);
@@ -161,6 +177,7 @@ static void test_topo_catches_cycle(void) {
 int main(void) {
     test_build_and_sort();
     test_topo_diamond();
+    test_validate_accepts_all_supported_dtypes();
     test_validate_passes_on_valid_graph();
     test_validate_catches_out_of_range_index();
     test_validate_catches_double_producer();

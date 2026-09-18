@@ -216,7 +216,9 @@ FeStatus fe_graph_validate(const FeGraph *g) {
         const FeTensorEntry *e = &g->tensors[t];
 
         if (e->dtype != DTYPE_FLOAT32 && e->dtype != DTYPE_INT8 &&
-            e->dtype != DTYPE_INT32   && e->dtype != DTYPE_FLOAT64) {
+            e->dtype != DTYPE_INT32   && e->dtype != DTYPE_FLOAT64 &&
+            e->dtype != DTYPE_FLOAT16 && e->dtype != DTYPE_INT16 &&
+            e->dtype != DTYPE_BFLOAT16) {
             fprintf(stderr, "fe_graph_validate: tensor %d (%s) has unrecognized dtype %d\n",
                     t, e->name, e->dtype);
             return FE_ERR_DTYPE;

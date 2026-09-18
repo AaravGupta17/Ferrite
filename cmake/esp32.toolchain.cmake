@@ -42,4 +42,5 @@ set(FERRITE_PLANNER_ALIGN   4   CACHE STRING "Activation-buffer alignment" FORCE
 # Ceilings sized for the FEMD-artifact model class (Section 2.4 / 4.4).
 set(FE_MAX_NODES            48  CACHE STRING "Graph node ceiling" FORCE)
 set(FE_MAX_TENSORS          96  CACHE STRING "Tensor registry ceiling" FORCE)
+set(FE_MAX_ALLOCS           96  CACHE STRING "Planner allocation ceiling" FORCE)
 set(FERRITE_MAX_DIMS        4   CACHE STRING "Tensor rank ceiling" FORCE)
