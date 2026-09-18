@@ -84,6 +84,7 @@ jobs:
       - name: Fuzz (time-boxed)
         continue-on-error: false
         run: |
+          mkdir -p build-fuzz/artifacts
           ./build-fuzz/fuzz_onnx_fuzzer fuzz/corpus \
             -max_total_time=120 \
             -timeout=10 \

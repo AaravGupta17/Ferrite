@@ -74,5 +74,5 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     FERRITE_NO_FLOAT64
 )
 
-# The Xtensa port requires no pthread/libm beyond what ESP-IDF provides.
-target_link_libraries(${COMPONENT_LIB} PRIVATE esp_timer)
+# The Xtensa port requires no pthread/libm beyond what ESP-IDF provides;
+# esp_timer linkage is handled by the PRIV_REQUIRES dependency graph above.
