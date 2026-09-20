@@ -1,5 +1,3 @@
-cat > ops/matmul.c << 'MATMULEOF'
-// ops/matmul.c
 #include "ops.h"
 #include "backend.h"
 #include <string.h>
@@ -107,4 +105,3 @@ FeStatus fe_linear(const FeTensor *A, const FeTensor *W,
     /* C += b (broadcast) */
     return fe_bias_add(C, b, C);
 }
-MATMULEOF
