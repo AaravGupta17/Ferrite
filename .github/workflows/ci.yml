@@ -231,3 +231,17 @@ jobs:
             bash -c "gcc -c core/platform_esp32.c -o /tmp/nope.o \
               && echo 'FAIL: platform_esp32 compiled on host' && exit 1 \
               || echo 'OK: platform_esp32 guards non-Xtensa builds'"
+
+  release-test:
+    name: build + test (Release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure
+        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-release
+      - name: Run suite
+        run: ctest --test-dir build-release --output-on-failure
