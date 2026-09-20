@@ -33,14 +33,18 @@ on:
 
 jobs:
   test:
-    name: build + test (Debug)
+    name: build + test (Debug, ${{ matrix.cc }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
       - name: Install ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=${{ matrix.cc }}
       - name: Build
         run: cmake --build build
       - name: Run suite
