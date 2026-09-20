@@ -1,5 +1,5 @@
 # Ferrite
-
+[![CI](https://github.com/AaravGupta17/Ferrite/actions/workflows/ci.yml/badge.svg)](https://github.com/AaravGupta17/Ferrite/actions/workflows/ci.yml)
 A **zero-dependency neural-network inference runtime in C11**, built from
 first principles. It parses ONNX protobufs with its own wire parser (no
 protobuf library), plans activation memory with its own lifetime-aware
