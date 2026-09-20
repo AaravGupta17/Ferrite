@@ -19,13 +19,13 @@ What exists and what belongs where.
 | Document | Location | Purpose | Owner cadence |
 |---|---|---|---|
 | `README.md` | repo root | Public face. What the project is, quickstart, benchmarks, demo link. | Update at each milestone |
-| `temps/explain.md` | `temps/` | Deep technical guide. How every subsystem works and connects. | Update with each subsystem change |
-| `temps/roadmap.md` | `temps/` | Where the project is going. Goal, priorities, timeline. | Update when priorities or scope change |
-| `documentation.md` | `temps/` | This file. How documentation is maintained. | Revise when standards change |
+| `docs/guide.md` | `docs/` | Deep technical guide. How every subsystem works and connects. | Update with each subsystem change |
+| `docs/roadmap.md` | `docs/` | Where the project is going. Goal, priorities, timeline. | Update when priorities or scope change |
+| `docs/documentation-standards.md` | `docs/` | This file. How documentation is maintained. | Revise when standards change |
 | Header comments | `*.h` | One-paragraph contract per public function or type. | Same commit as the code |
 | Commit messages | git | Why a change exists, scoped to one subsystem. | Every commit |
 
-**Naming.** Markdown files use `snake_case.md` at repo root; scratch/working docs live in `temps/`. Do not create new root docs without a reason — prefer extending the four above.
+**Naming.** Markdown files use `UPPERCASE.md` at repo root; everything else lives in `docs/` as `kebab-case.md`. Do not create new root docs without a reason — prefer extending the four above.
 
 ---
 

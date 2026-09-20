@@ -7,7 +7,7 @@
 #                guarantees sanitizers are never silently skipped in CI.
 #   fuzz       — clang's libFuzzer against the ONNX parser, time-boxed, in a
 #                persistent corpus (fuzz/corpus). Fails on crash/sanitizer trip.
-#   perf       — Release bench_avx2 vs committed temps/bench_baseline.json
+#   perf       — Release bench_avx2 vs committed bench/baseline.json
 #                (model-independent microbench; the acoustic model is not part
 #                of the gate). Built with FERRITE_SANITIZE=OFF: the numbers
 #                must measure optimized code, not an instrumented build.
@@ -16,7 +16,7 @@
 #                Re-seed the baseline with:
 #                  bench_avx2 --json > /tmp/cur.json
 #                  python3 tools/check_perf.py --current /tmp/cur.json \
-#                    --seed temps/bench_baseline.json --label linux-ci
+#                    --seed bench/baseline.json --label linux-ci
 #   coverage   — gcov build + gcovr, per-file report, minimum line coverage.
 #   golden     — Ferrite vs ONNX Runtime on the tools/golden_models zoo:
 #                identical seeds through both runtimes, tolerance-matched.
@@ -135,7 +135,7 @@ jobs:
           uname -a
           python3 tools/check_perf.py \
             --current /tmp/bench_current.json \
-            --baseline temps/bench_baseline.json \
+            --baseline bench/baseline.json \
             --label "linux-ci Release" \
             --threshold 0.30
       - name: Upload measured output (for re-seeding baseline)

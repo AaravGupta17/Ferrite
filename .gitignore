@@ -58,7 +58,6 @@ dkms.conf
 .idea/
 
 # Generated PDF (TeX build artifact)
-/temps/ferrite_guide.pdf
 
 # Python bytecode (check_perf.py)
 __pycache__/

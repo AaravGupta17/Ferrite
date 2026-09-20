@@ -2,7 +2,7 @@
 
 A zero-dependency neural-network inference runtime in C11. It loads ONNX models and runs them with hand-written kernels — no BLAS, no protobuf library, no SIMD wrapper, no malloc on the inference path. This document walks through the entire project, subsystem by subsystem, from the byte layout of a tensor to the static execution plan that runs a model.
 
-The shorter bridge document is `temps/explain.md` (how the pieces connect); the plan is `temps/roadmap.md`; this file is the deep dive into *how* each piece works.
+The shorter bridge document is `docs/guide.md` (how the pieces connect); the plan is `docs/roadmap.md`; this file is the deep dive into *how* each piece works.
 
 ---
 
@@ -463,7 +463,7 @@ typedef struct {
 - **`bench_model`**: end-to-end latency + per-op profile + memory plan vs naive + a naive-vs-AVX2 table derived from the loaded model's matmul shapes.
 - **`bench_avx2`**: micro benches — naive vs AVX2 matmul (with correctness verification), elementwise add, GEMM base vs transB.
 
-### Recorded numbers (`temps/bench_results.md`)
+### Recorded numbers (`docs/benchmarks.md`)
 
 Environment: AMD Ryzen 5 5600, MinGW GCC 16.2.0, single thread. The demo model (`tests/acousticleaknet.onnx`: 42 MatMul / 63 Conv / 21 softmax) does 5.893 ms/run (169.7 inf/s), 34.83 MFLOP/run, 32.04 MB weights; the planner saves **22.3%** of activation memory. fc1 `[1×65536×128]`: naive 28.5 → AVX2 4.77 ms = **6.0×** (Debug, scalar reference). Release tells a different, honest story: at `-O3` GCC auto-vectorizes the "naive" loop, so on the memory-bound M=1 shape the modular AVX2 kernel no longer wins (0.4×); the real AVX2-vs-scalar gap shows where scalar cannot be auto-vectorized — GEMM transB is 15.3× faster in AVX2. The debug/release split is why numbers must always be reported with the build mode.
 
@@ -526,7 +526,7 @@ These are the properties the whole project is built around, and the ones to pres
 
 ## 16. Known Gaps and Next Steps
 
-Tracked honestly in `temps/roadmap.md` and `AGENTS.md`:
+Tracked honestly in `docs/roadmap.md` and `AGENTS.md`:
 
 - **Half-precision/INT16 are seeded, not shipped.** INT8 is the engine path; INT16/FP16/BF16 are API-complete and tested, but the model-level repack and dispatch wiring for them are not built. The INT16 kernel's activation scale is still INT8-styled (`max/127`).
 - **Calibration collects; nothing consumes.** `fe_runtime_calibrate` records per-tensor max-|x| ranges; static activation scales, percentile/stat smoothing, and engine wiring for static scales are the missing second half.

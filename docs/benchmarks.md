@@ -83,7 +83,7 @@ measurement-integrity check (that bar is not a test; `test_simd.c` is).
 
 ### Linux CI runner (ubuntu-latest Release, committed gate baseline)
 
-Recorded as `temps/bench_baseline.json` via `check_perf.py --seed`; the
+Recorded as `bench/baseline.json` via `check_perf.py --seed`; the
 `perf` CI leg compares against these with a 30% threshold and uploads each
 run's JSON for re-seeding on runner/hardware changes.
 

@@ -67,7 +67,7 @@ FeStatus fe_matmul_int8(const FeTensor *A, const FeTensor *B, FeTensor *C);
  * A single global scale is dominated by whichever channel has the largest
  * magnitude, crushing precision on every other channel. Per-channel scaling
  * is what real quantized runtimes do for weights — this is the gap noted
- * in temps/roadmap.md ("per-tensor INT8 is a toy version").
+ * in docs/roadmap.md ("per-tensor INT8 is a toy version").
  *
  * For channel j: scale[j] = max_k(|in[k][j]|) / 127
  *                q[k][j]  = clamp(round(in[k][j] / scale[j]), -127, 127)

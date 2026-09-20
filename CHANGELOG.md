@@ -39,7 +39,7 @@ under the versioning policy above.
   driver for non-Clang toolchains; the `fuzz_runner` CTest replays the seed
   corpus. Complements the existing fixed-corpus `test_parser_fuzz`.
 - **Performance regression gate** (`tools/check_perf.py`, `bench_avx2
-  --json`, `temps/bench_baseline.json`): model-independent AVX2 microbench
+  --json`, `bench/baseline.json`): model-independent AVX2 microbench
   numbers compared against a committed baseline with a default 20% threshold
   and a `--seed` mode for regenerating the baseline. (Deliberately not wired
   to the acoustic `bench_model`; that stays a manual tool.)

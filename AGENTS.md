@@ -4,7 +4,7 @@
 
 Ferrite is a zero-dependency neural-network inference runtime in C11, built from first principles. It loads ONNX models and runs them with hand-written kernels. No BLAS. No protobuf library. No SIMD wrapper. The git history shows one subsystem per commit, each with its own test.
 
-This file tells an agent or contributor how to work in this repo: what the project is, how to build and test it, the conventions to follow, and the gaps to respect. The full technical guide is `temps/explain.md`; the plan is `temps/roadmap.md`.
+This file tells an agent or contributor how to work in this repo: what the project is, how to build and test it, the conventions to follow, and the gaps to respect. The full technical guide is `docs/guide.md`; the plan is `docs/roadmap.md`.
 
 ---
 
@@ -49,7 +49,6 @@ ctest --test-dir build          # all tests, from anywhere
 | `cmake/` | Cross toolchain presets (Pi Zero W, ESP32) | `raspberry-pi-zero-w.toolchain.cmake`, `esp32.toolchain.cmake` |
 | `idf/` | ESP-IDF integration: component + demo project | `ferrite/` (compiled via `ferrite_device` sources), `demo/`, `README.md` |
 | `docs/` | Port docs | `pi-zero-w-port.md`, `esp32-port.md` |
-| `temps/` | Working docs: guide, roadmap, doc standards, staged plan, benchmark results | `explain.md`, `roadmap.md`, `documentation.md`, `Stage*.md`, `bench_results.md` |
 
 Layer dependencies point downward only: `importer/` → `optim/` + `graph/` → `compiler/` (on graph/ops/core) → `planner/` → `parallel/` → `runtime/` → `ops/` + `simd/` + `core/`. `tools/` and `tests/` sit on top.
 
@@ -110,7 +109,7 @@ Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the han
   Pi QEMU cross, ESP32 IDF compile gate, golden-vs-ONNX-Runtime);
   `fuzz/` ships a libFuzzer entry (bridged via `fuzz_onnx_libfuzzer.c`) plus a
   standalone replayer; `tools/check_perf.py` diffs `bench_avx2 --json`
-  against `temps/bench_baseline.json` (**model-independent** — the acoustic
+  against `bench/baseline.json` (**model-independent** — the acoustic
   `bench_model` is deliberately not wired into automation). All eight legs
   are green on `main`; the perf baseline is seeded from the Linux Release
   runner (matmul 4.78x / elementwise 3.92x / gemm 15.65x, 30% threshold, the
@@ -145,7 +144,7 @@ Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the han
 
 - **Start** with `tests/` and header comments — each header documents its contract in one paragraph.
 - **Verify** a change by building and running the matching `test_*` binary under ASan/UBSan. `tests/test_engine.c` is the best end-to-end example.
-- **Keep docs in sync:** code changes update `temps/explain.md`; scope/status changes update `temps/roadmap.md`; the staged plan lives in `temps/Stage*.md`.
+- **Keep docs in sync:** code changes update `docs/guide.md`; scope/status changes update `docs/roadmap.md`.
 - **Do not** add new root-level Markdown files without a reason. `AGENTS.md` and `README.md` are the two root docs.
 - **Do not** hide unsupported behavior behind silence. Fail loudly (`FE_ERR_SHAPE`), as the engine does today.
 
@@ -153,7 +152,6 @@ Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the han
 
 ## Reading Order for New Context
 
-1. `temps/explain.md` — how every subsystem works and connects.
-2. `temps/roadmap.md` — where the project is going and immediate next steps.
-3. `temps/documentation.md` — the documentation standards (BLUF, honesty over polish).
-4. `temps/Stage*.md` — the staged long-term plan (Stage 0 = current).
+1. `docs/guide.md` — how every subsystem works and connects.
+2. `docs/roadmap.md` — where the project is going and immediate next steps.
+3. `docs/documentation-standards.md` — the documentation standards (BLUF, honesty over polish).

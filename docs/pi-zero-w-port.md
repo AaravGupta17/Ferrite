@@ -31,7 +31,7 @@ To cross the same build to a board (or run tests there), override
 To include the full host stack on-device (the Pi has RAM + a filesystem, so
 the importer/optimizer are viable), add
 `-DFERRITE_ENABLE_IMPORTER=ON -DFERRITE_ENABLE_OPTIM=ON`. The model family
-that these ceilings fit is in `temps/roadmap.md`; raise `FE_MAX_NODES` etc.
+that these ceilings fit is in `docs/roadmap.md`; raise `FE_MAX_NODES` etc.
 for bigger graphs.
 
 ## Runtime choice

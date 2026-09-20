@@ -3,7 +3,7 @@
 tools/check_perf.py — performance regression gate (Section 1.3).
 
 Compares `bench_avx2 --json` output against a committed baseline
-(temps/bench_baseline.json) and fails when a tracked metric regresses past
+(bench/baseline.json) and fails when a tracked metric regresses past
 `--threshold` (default 0.20 = 20%; the deep-dive's starting point to dodge
 noise).
 

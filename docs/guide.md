@@ -512,7 +512,7 @@ A Unix-oriented `Makefile` with equivalent targets is kept for WSL during the tr
 | `test_tensor_ser` | serialization round-trips + corruption rejection |
 | `test_parallel` | thread-pool partition, parallel GEMM vs oracle, scheduler causal order |
 | `test_compiler` | IR lowering, dead-elim, kernel selection, IR output == engine output, schedule validity |
-| `bench_matmul` / `bench_matmul_avx2` / `bench_avx2` / `bench_model` | performance measurements (Debug and Release; see `temps/bench_results.md`) |
+| `bench_matmul` / `bench_matmul_avx2` / `bench_avx2` / `bench_model` | performance measurements (Debug and Release; see `docs/benchmarks.md`) |
 
 Build flags:
 

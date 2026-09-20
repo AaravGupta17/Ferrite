@@ -92,7 +92,7 @@ Model-level (Debug, `tests/acousticleaknet.onnx`): fc1 `[1×65536×128]` 28.5 �
 896 KB from a naive 1153.7 KB (**−22.3%**). INT8: MLP float vs INT8 max abs
 error 1.3e-3; `tiny_mlp` weights 268 B → 100 B integer-exact.
 
-Full numbers: `temps/bench_results.md`.
+Full numbers: `docs/benchmarks.md`.
 
 ## Ports
 
@@ -108,7 +108,7 @@ Full numbers: `temps/bench_results.md`.
 
 Eight legs, green on `main`: build+test (Debug), **mandatory ASan/UBSan**,
 libFuzzer against the ONNX parser (persistent corpus), perf gate (Release
-`bench_avx2` vs `temps/bench_baseline.json`, 30% threshold, baseline
+`bench_avx2` vs `bench/baseline.json`, 30% threshold, baseline
 re-seeded from the runner), coverage (`--fail-under-line 70`), Pi Zero W
 cross+QEMU, ESP32 IDF compile gate, and golden-vs-ONNX-Runtime. Nothing is
 silently skipped: a leg that can't do its check fails.
@@ -124,8 +124,8 @@ python3 tools/golden_compare.py --run-model build/run_model
 ## Where to start reading
 
 - `AGENTS.md` — this repo's operating guide
-- `temps/explain.md` — how every subsystem works
-- `temps/roadmap.md` — where it is and what is next
+- `docs/guide.md` — how every subsystem works
+- `docs/roadmap.md` — where it is and what is next
 - `tests/test_engine.c` — best end-to-end example
 
 ## Honest limitations
