@@ -391,12 +391,14 @@ foreach(t test_tensor test_allocator test_ops test_ops3 test_graph test_engine
         test_tensor_ser test_opt test_parallel test_compiler test_artifact
         test_error_contract)
     ferrite_exe(${t})
+    target_compile_options(${t} PRIVATE -UNDEBUG)
     # Run from the source root: tests reference fixtures by relative
     # path ("tests/tiny_mlp.onnx"), matching the Makefile's cwd.
     add_test(NAME ${t} COMMAND ${t} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
 if(FERRITE_ENABLE_AVX2)
     ferrite_exe(test_simd)
+    target_compile_options(test_simd PRIVATE -UNDEBUG)
     add_test(NAME test_simd COMMAND test_simd WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
