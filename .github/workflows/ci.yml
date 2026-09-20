@@ -45,7 +45,28 @@ jobs:
         run: cmake --build build
       - name: Run suite
         run: ctest --test-dir build --output-on-failure
-
+  windows:
+    name: build + test (Windows / MinGW)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build
+      - name: Run suite
+        run: ctest --test-dir build --output-on-failure
   sanitize:
     name: build + test (ASan/UBSan mandatory)
     runs-on: ubuntu-latest
