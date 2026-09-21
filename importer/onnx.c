@@ -2,6 +2,7 @@
 #include "onnx.h"
 #include "tensor.h"
 #include "optim.h"
+#include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -901,11 +902,16 @@ FeStatus fe_onnx_load(FeGraph *graph, FeArena *weight_arena,
         status = fe_optimize(graph, weight_arena);
     if (status == FE_OK)
         check_softmax_axes(graph);
-    if (status == FE_OK) {
-        printf("ONNX: loaded %d nodes, %d tensors\n",
-               graph->n_nodes, graph->n_tensors);
-        fe_graph_print(graph);
-    }
+    /*
+     * Report success through the logger, not stdout. A library that prints
+     * unconditionally corrupts any caller whose stdout carries data (run_model
+     * piping a tensor, a tool emitting JSON), and core/log.h already sets the
+     * policy: INFO compiles out at the default WARN level, so release builds
+     * stay silent. Callers wanting the node dump call fe_graph_print.
+     */
+    if (status == FE_OK)
+        fe_log_info("loaded %d nodes, %d tensors from %s",
+                    graph->n_nodes, graph->n_tensors, path);
 
     return status;
 }
