@@ -3,6 +3,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdint.h>
 
 FeStatus fe_arena_init(FeArena *a, void *buffer, size_t size) {
     if (!a || !buffer || size == 0) return FE_ERR_NULL;
@@ -44,9 +45,23 @@ FeTensor *fe_arena_alloc_tensor(FeArena *a, FeDtype dtype,
     FeTensor *t = fe_arena_alloc(a, sizeof(FeTensor), _Alignof(FeTensor));
     if (!t) return NULL;
 
-    /* Compute total element count and buffer size */
+    /*
+     * Compute the buffer size, refusing shapes whose byte count does not fit
+     * in size_t. Shapes reach here straight from the ONNX importer and the
+     * FEMD loader, so a hostile or corrupt file can otherwise wrap this
+     * product (4 dims of 2^20 wrap to 0) and produce a tensor whose shape
+     * promises far more memory than was allocated. One division per dim, at
+     * allocation time only — never in a hot path.
+     *
+     * A zero extent is left alone: it yields nbytes == 0 as it always has.
+     */
     size_t nbytes = fe_dtype_size(dtype);
-    for (int i = 0; i < ndim; i++) nbytes *= (size_t)shape[i];
+    for (int i = 0; i < ndim; i++) {
+        if (shape[i] < 0) return NULL;
+        size_t d = (size_t)shape[i];
+        if (d != 0 && nbytes > SIZE_MAX / d) return NULL;   /* would overflow */
+        nbytes *= d;
+    }
 
     /* Allocate the data buffer from the same arena */
     void *data = fe_arena_alloc(a, nbytes, 64);  /* 64-byte align for SIMD */
