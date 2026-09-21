@@ -159,7 +159,13 @@ static int find_or_add_tensor(FeGraph *g, const char *name) {
     }
     /* Not found — add a placeholder (shape filled in later) */
     int shape[] = {0};
-    return fe_graph_add_tensor(g, name, DTYPE_FLOAT32, 1, shape, 0);
+    int idx = fe_graph_add_tensor(g, name, DTYPE_FLOAT32, 1, shape, 0);
+    if (idx < 0)
+        fprintf(stderr,
+                "ONNX: tensor registry full at %d entries while adding '%s' "
+                "— raise FE_MAX_TENSORS to load this model\n",
+                FE_MAX_TENSORS, name);
+    return idx;
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,10 +202,18 @@ static FeStatus parse_initializer(FePbReader *r, FeGraph *g,
 
         switch (field) {
             case 1: /* dims — repeated int64 */
-                if (ndim < FERRITE_MAX_DIMS)
-                    dims[ndim++] = (int)fe_pb_varint(r);
-                else
-                    fe_pb_varint(r);   /* discard */
+                /* Dropping an extent silently would load a rank-9 tensor as a
+                 * rank-8 one with a different shape and wrong results. Refuse
+                 * instead, and name the knob that lifts the ceiling. */
+                if (ndim >= FERRITE_MAX_DIMS) {
+                    fprintf(stderr,
+                            "ONNX: initializer '%s' has more than %d dimensions "
+                            "— raise FERRITE_MAX_DIMS to load this model\n",
+                            name[0] ? name : "(unnamed)", FERRITE_MAX_DIMS);
+                    free(fvals);
+                    return FE_ERR_SHAPE;
+                }
+                dims[ndim++] = (int)fe_pb_varint(r);
                 break;
             case 2: data_type = (int)fe_pb_varint(r); break;
             case 7: /* float_data — repeated float */
@@ -544,7 +558,13 @@ static FeStatus parse_node(FePbReader *r, FeGraph *g) {
 
     int idx = fe_graph_add_node(g, node_name, op,
                                  inputs, n_in, outputs, n_out);
-    if (idx < 0) return FE_ERR_NOMEM;
+    if (idx < 0) {
+        fprintf(stderr,
+                "ONNX: graph node limit of %d reached while adding '%s' "
+                "— raise FE_MAX_NODES to load this model\n",
+                FE_MAX_NODES, node_name[0] ? node_name : op_str);
+        return FE_ERR_NOMEM;
+    }
 
     FeNode *node = &g->nodes[idx];
 
@@ -699,8 +719,17 @@ static FeStatus parse_value_info(FePbReader *r, FeGraph *g) {
                                             else
                                                 fe_pb_skip(&dr, dwt);
                                         }
-                                        if (ndim < FERRITE_MAX_DIMS)
-                                            dims[ndim++] = dim_val;
+                                        if (ndim >= FERRITE_MAX_DIMS) {
+                                            fprintf(stderr,
+                                                "ONNX: tensor '%s' declares more "
+                                                "than %d dimensions — raise "
+                                                "FERRITE_MAX_DIMS to load this "
+                                                "model\n",
+                                                name[0] ? name : "(unnamed)",
+                                                FERRITE_MAX_DIMS);
+                                            return FE_ERR_SHAPE;
+                                        }
+                                        dims[ndim++] = dim_val;
                                     } else {
                                         fe_pb_skip(&hr, hwt);
                                     }

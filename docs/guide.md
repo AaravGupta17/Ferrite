@@ -198,7 +198,7 @@ typedef struct {
 - **Ops** (`FeOpType`): `INPUT`, `OUTPUT`, `MATMUL`, `LINEAR`, `RELU`, `SOFTMAX`, `CONV1D`, `BATCHNORM`, `ADD`, `FLATTEN` plus the Stage 3 families — Exp, Log, Pow, Sub/Mul/Div/Neg, Sigmoid/Tanh/GELU/LeakyReLU/ELU/Swish, GEMM, Transpose, Conv2D, MaxPool, AvgPool, LayerNorm/GroupNorm, Attention/Multi-Head Attention/Embedding/Positional Encoding. The `attrs` union carries op-specific attributes (softmax axis, conv stride/pad, norm eps, gemm trans/alpha/beta).
 - **Nodes** reference tensors by **index** into the registry, not by pointer.
 - **Tensor entries** (`FeTensorEntry`) hold name, shape, dtype, an `is_weight` flag, and a `FeTensor *tensor` that stays `NULL` until memory is assigned.
-- **Capacity limits**: 512 nodes, 1024 tensors, 8 inputs / 4 outputs per node, 64-char names. Fixed capacity — typical of embedded runtimes.
+- **Capacity limits**: 512 nodes, 1024 tensors, 8 inputs / 4 outputs per node, 64-char names. Fixed capacity — typical of embedded runtimes. Raise the ceilings at configure time via the `FE_MAX_NODES`, `FE_MAX_TENSORS` and `FERRITE_MAX_DIMS` CMake cache variables; `FE_MAX_ALLOCS` must stay >= `FE_MAX_TENSORS`, which a configure-time `FATAL_ERROR` and a `_Static_assert` in `planner/memory_planner.h` both enforce. Exceeding any ceiling is a **loud** load-time failure naming the knob to raise: the importer refuses a tensor whose rank passes `FERRITE_MAX_DIMS` rather than dropping the surplus extents, and reports registry/node exhaustion instead of returning a bare `FE_ERR_NOMEM` that looks like an undersized arena.
 
 ### Topological sort (Kahn's algorithm)
 
@@ -559,5 +559,5 @@ Tracing one full inference through every layer:
 - **Optimization runs at load, once.** `fe_optimize` runs in `fe_onnx_load` and again nowhere; interop with dynamic input shapes is limited to shape inference (dead-elim's live set ignores shapes).
 - **Quantization is per-tensor and per-channel, wired into the engine.** `fe_quantize_model` converts MATMUL/LINEAR weights to INT8 (per-channel scales) and the exec-plan wrappers dispatch dynamically. Scales still come from a single tensor's max, not a calibration set; no calibration pipeline. INT16 and FP16 are API-complete (`fe_quantize_int16`/`fe_matmul_int16_dyn`/`fe_linear_int16`, `core/fp16.h`) but not wired into engine dispatch. Activations are quantized dynamically per run — there is no precomputed activation scale.
 - **AVX2 needs `N % 8 == 0`** for the vectorized path. Remainders fall back to scalar code.
-- **Fixed capacities** (512 nodes / 1024 tensors / 8 dims). Fine for small models; would need dynamic growth for larger ones.
+- **Fixed capacities** (512 nodes / 1024 tensors / 8 dims), raisable per target through CMake cache variables and refused loudly when exceeded. Fine for small models; avoiding a reconfigure for larger ones would need dynamic growth.
 - **Parallelism is opt-in, not in the engine hot path.** The thread pool, row-parallel GEMM, and DAG scheduler live in `parallel/` with their own tests; `fe_runtime_run` remains single-threaded unless a caller routes work through the pool explicitly.

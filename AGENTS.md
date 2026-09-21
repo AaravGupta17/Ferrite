@@ -135,10 +135,13 @@ Note: ONNX-loaded graphs have **no** `FE_OP_INPUT`/`FE_OP_OUTPUT` nodes (the han
 - **AVX2 vectorized path needs `N % 8 == 0`** on the SIMD units; the kernels
   split into a vectorized prefix + scalar tail so remainder shapes still win.
 - **Fixed-but-configurable capacities:** 512 nodes / 1024 tensors / 8 dims by
-  default, threadable per target via CMake cache vars (`FE_MAX_NODES`,
+  default, tunable per target via CMake cache vars (`FE_MAX_NODES`,
   `FE_MAX_TENSORS`, `FERRITE_MAX_DIMS`, `FE_MAX_ALLOCS`,
-  `FERRITE_PLANNER_ALIGN`). AVX2-on-non-x86 is a CMake `FATAL_ERROR`, not a
-  silent downgrade.
+  `FERRITE_PLANNER_ALIGN`). Exceeding a ceiling is a loud load-time error
+  naming the knob to raise — the importer refuses a tensor whose rank passes
+  `FERRITE_MAX_DIMS` instead of dropping the surplus extents, and reports
+  registry/node exhaustion rather than a bare `FE_ERR_NOMEM`.
+  AVX2-on-non-x86 is a CMake `FATAL_ERROR`, not a silent downgrade.
 
 ---
 

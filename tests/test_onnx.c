@@ -115,6 +115,45 @@ static void test_truncated_raw_data_rejected(void) {
            "(43-byte file claiming 400 bytes is refused)\n");
 }
 
+/*
+ * A tensor with more dimensions than FERRITE_MAX_DIMS must be refused.
+ *
+ * Regression: both parsers used to drop the surplus extents silently -- the
+ * initializer path discarded the varint, and parse_value_info simply skipped
+ * the assignment. A rank-9 tensor then loaded as a rank-8 one with a
+ * different shape, producing wrong results with no diagnostic, which breaks
+ * the "nothing is ever silently dropped" invariant. The message also names
+ * the CMake knob that lifts the ceiling.
+ */
+static void test_excess_dims_rejected(void) {
+    /* MatMul(x, W) where initializer W declares 9 dims of 1 (rank 9 > 8). */
+    static const unsigned char model[] = {
+        0x3A, 0x32, 0x0A, 0x11, 0x0A, 0x01, 0x78, 0x0A, 0x01, 0x57,
+        0x12, 0x01, 0x79, 0x22, 0x06, 0x4D, 0x61, 0x74, 0x4D, 0x75,
+        0x6C, 0x2A, 0x1D, 0x08, 0x01, 0x08, 0x01, 0x08, 0x01, 0x08,
+        0x01, 0x08, 0x01, 0x08, 0x01, 0x08, 0x01, 0x08, 0x01, 0x08,
+        0x01, 0x10, 0x01, 0x42, 0x01, 0x57, 0x4A, 0x04, 0x00, 0x00,
+        0x80, 0x3F,
+    };
+
+    const char *path = "tests/excess_dims.onnx";
+    FILE *f = fopen(path, "wb");
+    assert(f);
+    assert(fwrite(model, 1, sizeof model, f) == sizeof model);
+    fclose(f);
+
+    FeGraph g;
+    FeArena weight_arena;
+    fe_arena_init(&weight_arena, weight_buf, WEIGHT_BUF_SIZE);
+
+    FeStatus s = fe_onnx_load(&g, &weight_arena, path);
+    assert(s != FE_OK);      /* refused, not silently truncated to rank 8 */
+
+    remove(path);
+    printf("PASS test_excess_dims_rejected "
+           "(rank-9 tensor refused instead of truncated)\n");
+}
+
 /* ---------------------------------------------------------------- */
 /* Hand-rolled protobuf wire format                                  */
 /* ---------------------------------------------------------------- */
@@ -713,6 +752,7 @@ int main(void) {
     test_load_tiny_mlp();
     test_softmax_axis_recorded_not_misflagged();
     test_truncated_raw_data_rejected();
+    test_excess_dims_rejected();
     test_unsupported_op_fails_loudly();
     test_value_info_and_attrs();
     test_pool_and_norm_attrs();

@@ -7,7 +7,7 @@ allocator, and runs hand-written kernels (no BLAS, no SIMD wrapper). AVX2 is
 runtime-detected; scalar fallback always exists.
 
 Everything ships with one subsystem per commit and one `test_*` binary per
-subsystem, all green under ASan/UBSan, and an 8-leg CI pipeline that is green
+subsystem, all green under ASan/UBSan, and an 11-job CI pipeline that is green
 on `main`.
 
 ## Quickstart
@@ -127,15 +127,18 @@ python3 tools/golden_compare.py --run-model build/run_model
 
 ## Where to start reading
 
-- `AGENTS.md` — this repo's operating guide
+- `CLAUDE.md` / `AGENTS.md` — this repo's operating guide
 - `docs/guide.md` — how every subsystem works
 - `docs/roadmap.md` — where it is and what is next
 - `tests/test_engine.c` — best end-to-end example
 
 ## Honest limitations
 
-- Fixed-but-configurable capacities (512 nodes / 1024 tensors / 8 dims by
-  default; threadable per target via CMake).
+- Fixed-but-configurable capacities: 512 nodes / 1024 tensors / 8 dims by
+  default. Raise them per target at configure time with `-DFE_MAX_NODES=`,
+  `-DFE_MAX_TENSORS=`, `-DFERRITE_MAX_DIMS=`. A model that exceeds one is
+  refused at load with a message naming the knob to raise — never a silently
+  truncated shape or a dropped node.
 - AVX2 only; the vectorized prefix requires `N % 8 == 0` with a scalar tail
   for the rest. NEON waits for a Pi Zero 2 W+ target.
 - The engine hot path is deliberately single-threaded (parallel subsystem
