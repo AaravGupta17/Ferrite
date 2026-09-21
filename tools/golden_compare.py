@@ -32,6 +32,10 @@ import onnxruntime as ort
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from golden_gen import OUTDIR  # noqa: E402
 
+REPO = Path(__file__).resolve().parent.parent
+# Models that live outside the generated zoo (committed fixtures).
+EXTRA_PATHS = {"acousticleaknet.onnx": REPO / "tests" / "acousticleaknet.onnx"}
+
 BIN_MAGIC = b"FRT1"
 RNG = np.random.default_rng(424242)  # fixed per session => reproducible runs
 
@@ -41,6 +45,7 @@ MODELS = {
     "minicnn.onnx": ([1, 1, 8, 8], [1, 8]),
     "convbn.onnx":  ([1, 1, 8, 8], [1, 4]),
     "normmlp.onnx": ([1, 8],   [1, 3]),
+    "acousticleaknet.onnx": ([1, 1, 1024], [1, 3]),
 }
 
 
@@ -92,7 +97,7 @@ def run_ferrite(run_model, model_path, x, out_shape):
 
 
 def compare(model_name, run_model, atol, rtol):
-    model_path = OUTDIR / model_name
+    model_path = EXTRA_PATHS.get(model_name, OUTDIR / model_name)
     in_shape, out_shape = MODELS[model_name]
 
     x = RNG.uniform(-1.0, 1.0, in_shape).astype(np.float32)

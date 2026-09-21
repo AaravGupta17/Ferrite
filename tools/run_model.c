@@ -31,8 +31,10 @@
 #include "../runtime/engine.h"
 #include "../importer/onnx.h"
 
-#define WEIGHT_BUF_SIZE (1u << 20)
-#define ACT_BUF_SIZE    (1u << 20)
+/* Sized for AcousticLeakNet (~32 MB of weights, ~0.9 MB of activations).
+ * Static, so untouched pages cost nothing. */
+#define WEIGHT_BUF_SIZE (64u << 20)
+#define ACT_BUF_SIZE    (4u << 20)
 
 static unsigned char weight_buf[WEIGHT_BUF_SIZE] __attribute__((aligned(64)));
 static unsigned char act_buf   [ACT_BUF_SIZE]    __attribute__((aligned(64)));
