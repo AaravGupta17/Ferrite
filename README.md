@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/AaravGupta17/Ferrite/actions/workflows/ci.yml/badge.svg)](https://github.com/AaravGupta17/Ferrite/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Website](https://img.shields.io/badge/site-ferrite--c11.github.io-a51c30)](https://ferrite-c11.github.io/FerriteWebsite/)
 
 **A neural-network inference runtime in 222 KB of C11, with zero dependencies.**
 
@@ -220,6 +221,8 @@ exactly this reason. Full numbers and methodology: [`docs/benchmarks.md`](docs/b
 - [`docs/deep-dive.md`](docs/deep-dive.md) — long-form internals, down to byte layouts
 - [`tests/test_engine.c`](tests/test_engine.c) — the best end-to-end example
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, and commit conventions
+- [ferrite-c11.github.io/FerriteWebsite](https://ferrite-c11.github.io/FerriteWebsite/) — the same
+  material as a page, if you would rather scroll than read source
 
 ## License
 
