@@ -158,9 +158,20 @@ def main():
     ap.add_argument("--only", default=None, help="run a single model name")
     args = ap.parse_args()
 
-    if not Path(args.run_model).exists():
+    # Resolve to an absolute native path before handing it to subprocess.
+    # On Windows CreateProcess does not accept a relative forward-slash path,
+    # so the documented "--run-model build/run_model" form dies with an opaque
+    # FileNotFoundError unless it is normalized here. The .exe fallback lets
+    # the same documented command work on the MinGW dev host.
+    run_model = Path(args.run_model)
+    if not run_model.exists() and not run_model.suffix:
+        exe = run_model.with_suffix(".exe")
+        if exe.exists():
+            run_model = exe
+    if not run_model.exists():
         print(f"run_model binary not found: {args.run_model}", file=sys.stderr)
         return 2
+    run_model = str(run_model.resolve())
 
     if not OUTDIR.exists():
         print(f"model zoo missing at {OUTDIR} — run tools/golden_gen.py first",
@@ -169,12 +180,19 @@ def main():
 
     print(f"golden comparison  (atol={args.atol:.0e}, rtol={args.rtol:.0e})")
     all_ok = True
-    names = [args.only] if args.only else sorted(MODELS)
+    # --only accepts the bare stem ("convbn") as documented, or the full
+    # "convbn.onnx" key.
+    if args.only:
+        only = args.only if args.only in MODELS else args.only + ".onnx"
+        names = [only]
+    else:
+        names = sorted(MODELS)
     for name in names:
         if name not in MODELS:
-            print(f"unknown model {name}", file=sys.stderr)
+            print(f"unknown model {args.only or name}; known models: "
+                  f"{', '.join(sorted(MODELS))}", file=sys.stderr)
             return 2
-        all_ok &= compare(name, args.run_model, args.atol, args.rtol)
+        all_ok &= compare(name, run_model, args.atol, args.rtol)
 
     print("PASS" if all_ok else "FAIL")
     return 0 if all_ok else 1
