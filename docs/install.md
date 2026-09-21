@@ -103,8 +103,8 @@ You should see `100% tests passed out of 12`.
 ## 6. Next steps
 
 - **Run the demo:** `cmake --build build --target demo && ./build/demo`
-- **Run the benchmarks:** see `documentation/README.md#5-run-the-benchmarks`
-- **Understand the codebase:** see `documentation/README.md#layout-at-a-glance`
+- **Run the benchmarks:** see `docs/getting-started.md#5-run-the-benchmarks`
+- **Understand the codebase:** see `docs/getting-started.md#layout-at-a-glance`
 
 ## Troubleshooting
 

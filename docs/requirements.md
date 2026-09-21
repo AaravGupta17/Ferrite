@@ -44,7 +44,7 @@ Sanitizers are a strict subset of the requirement: you don't *need* them to buil
 
 ## Verifying your environment
 
-After installing the toolchain (see `INSTALL.md`), confirm:
+After installing the toolchain (see `install.md`), confirm:
 
 ```sh
 gcc --version    # or: clang --version

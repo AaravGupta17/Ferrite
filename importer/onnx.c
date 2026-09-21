@@ -503,7 +503,7 @@ static FeStatus parse_node(FePbReader *r, FeGraph *g) {
     /* ONNX "Conv" is N-D; pick 1D or 2D from kernel_shape's rank. */
     if (op == FE_OP_CONV1D && kernel_dims >= 2) op = FE_OP_CONV2D;
 
-    if (node_name[0] == '\0') strncpy(node_name, op_str, FE_NAME_LEN - 1);
+    if (node_name[0] == '\0') snprintf(node_name, FE_NAME_LEN, "%s", op_str);
 
     int idx = fe_graph_add_node(g, node_name, op,
                                  inputs, n_in, outputs, n_out);

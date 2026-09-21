@@ -4,7 +4,7 @@
 
 Ferrite is a zero-dependency C11 neural-network inference runtime. It parses ONNX files by hand, loads them into a computation graph, and runs them with hand-written kernels. This document tells you exactly how to build it and run it. Everything is done from the repository root.
 
-> **New here?** See [`INSTALL.md`](INSTALL.md) to set up the toolchain, and [`REQUIREMENTS.md`](REQUIREMENTS.md) for what Ferrite needs — including which compilers support the ASan/UBSan memory checks.
+> **New here?** See [`install.md`](install.md) to set up the toolchain, and [`requirements.md`](requirements.md) for what Ferrite needs — including which compilers support the ASan/UBSan memory checks.
 
 ## Requirements
 
