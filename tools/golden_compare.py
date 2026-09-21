@@ -36,7 +36,12 @@ from golden_gen import OUTDIR  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 # Models that live outside the generated zoo (committed fixtures).
-EXTRA_PATHS = {"acousticleaknet.onnx": REPO / "tests" / "acousticleaknet.onnx"}
+EXTRA_PATHS = {
+    "acousticleaknet.onnx": REPO / "tests" / "acousticleaknet.onnx",
+    # The demo model. Guarding it here means CI proves the thing a visitor
+    # actually runs still matches ONNX Runtime on every push.
+    "mnist.onnx": REPO / "tests" / "mnist.onnx",
+}
 
 # AcousticLeakNet cut at the Softmax input. The softmax output of this model
 # is nearly uniform (~0.33 each), which squashes numerical errors; the logits
@@ -64,6 +69,7 @@ MODELS = {
     "minicnn.onnx": ([1, 1, 8, 8], [1, 8]),
     "convbn.onnx":  ([1, 1, 8, 8], [1, 4]),
     "normmlp.onnx": ([1, 8],   [1, 3]),
+    "mnist.onnx": ([1, 784], [1, 10]),
     "acousticleaknet.onnx": ([1, 1, 1024], [1, 3]),
     "acousticleaknet_logits.onnx": ([1, 1, 1024], [1, 3]),
 }
