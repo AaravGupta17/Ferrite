@@ -100,3 +100,7 @@ __pycache__/
 /test_artifact_bad_*.femd
 tests/*.femd
 tests/*.femd.h
+
+# Agent/assistant operating guides - kept local, not shipped
+/CLAUDE.md
+/AGENTS.md
