@@ -137,6 +137,7 @@ jobs:
       - name: Compare vs baseline
         run: |
           uname -a
+          grep -m1 "model name" /proc/cpuinfo
           python3 tools/check_perf.py \
             --current /tmp/bench_current.json \
             --baseline bench/baseline.json \
