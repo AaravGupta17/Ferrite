@@ -241,7 +241,7 @@ jobs:
       - name: Install ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Configure
-        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-Werror
       - name: Build
         run: cmake --build build-release
       - name: Run suite
