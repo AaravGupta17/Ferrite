@@ -58,6 +58,10 @@ dkms.conf
 .idea/
 
 # Generated PDF (TeX build artifact)
+*.pdf
+
+# Local staging scratch (holds the generated guide PDF)
+/temps/
 
 # Python bytecode (check_perf.py)
 __pycache__/
