@@ -12,6 +12,75 @@ Environment: AMD Ryzen 5 5600, MinGW GCC 16.2.0 (scoop), single thread.
 
 ---
 
+## Ferrite vs ONNX Runtime (Release, single thread)
+
+The headline comparison. Same model, same input, same timing method (1 warmup,
+then the mean of 20 runs) -- `tools/bench_onnxruntime.py` mirrors `bench_model.c`
+deliberately so the two are comparable.
+
+```sh
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DFERRITE_SANITIZE=OFF
+cmake --build build-release --target bench_model && ./build-release/bench_model
+python tools/bench_onnxruntime.py
+```
+
+| `tests/acousticleaknet.onnx` | Ferrite | ONNX Runtime 1.30 |
+|---|---|---|
+| Latency, 1 thread | 2.423 ms | **1.055 ms** |
+| Throughput, 1 thread | 412.7 inf/s | 947.7 inf/s |
+| Latency, all cores | n/a (single-threaded by design) | 0.550 ms |
+| Binary | **222 KB** stripped | 18.4 MB (`onnxruntime.dll`) |
+| Dependencies | none | many |
+
+**ONNX Runtime is 2.3x faster single-threaded, and 4.4x faster using all cores.**
+That is the expected result against a mature, heavily tuned runtime, and it is
+reported here rather than buried. Ferrite's argument is the other three rows: same
+answers, 1/83rd the binary, no dependencies.
+
+The all-core number is listed for context only. It is not a like-for-like
+comparison, since Ferrite's engine hot path is single-threaded on purpose.
+
+### Binary size
+
+```sh
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DFERRITE_SANITIZE=OFF
+cmake --build build-release --target run_model
+strip -o /tmp/rm_stripped build-release/run_model && ls -l /tmp/rm_stripped
+```
+
+| Artifact | Size |
+|---|---|
+| `run_model` stripped (parser + optimizer + planner + engine + all kernels) | **222 KB** |
+| `run_model` unstripped | 850 KB |
+| `libferrite_ops.a` | 242 KB |
+| `libferrite_core.a` | 107 KB |
+| `libferrite_runtime.a` | 41 KB |
+
+---
+
+## MNIST end-to-end (Release)
+
+Ferrite's own accuracy over the full 10,000-image test set -- not a figure copied
+from the training script.
+
+```sh
+python tools/train_mnist.py
+cmake --build build --target mnist_eval
+./build/mnist_eval tests/mnist.onnx build/mnist-data/test_images.bin build/mnist-data/test_labels.bin
+```
+
+| Metric | Value |
+|---|---|
+| Model | 784-128-10 MLP, trained in PyTorch, exported to ONNX |
+| PyTorch test accuracy | 97.52% (9752/10000) |
+| **Ferrite test accuracy** | **97.52% (9752/10000)** -- matches to the image |
+| Latency | 0.303 ms/image |
+| Throughput | 3300 images/s, single thread |
+| Weights | 398 KB fp32 |
+| Peak activations | **1.5 KB** |
+
+---
+
 ## Model-level (default Debug build)
 
 `cmake --build build --target bench_model && ./build/bench_model`
