@@ -19,13 +19,14 @@ What exists and what belongs where.
 | Document | Location | Purpose | Owner cadence |
 |---|---|---|---|
 | `README.md` | repo root | Public face. What the project is, quickstart, benchmarks, demo link. | Update at each milestone |
+| `CLAUDE.md` / `AGENTS.md` | repo root | Operating guide for a contributor or agent: build, conventions, invariants, traps. Two files because each is the one its tooling loads automatically; keep the claims in sync. | Update when build, conventions, or invariants change |
 | `docs/guide.md` | `docs/` | Deep technical guide. How every subsystem works and connects. | Update with each subsystem change |
 | `docs/roadmap.md` | `docs/` | Where the project is going. Goal, priorities, timeline. | Update when priorities or scope change |
 | `docs/documentation-standards.md` | `docs/` | This file. How documentation is maintained. | Revise when standards change |
 | Header comments | `*.h` | One-paragraph contract per public function or type. | Same commit as the code |
 | Commit messages | git | Why a change exists, scoped to one subsystem. | Every commit |
 
-**Naming.** Markdown files use `UPPERCASE.md` at repo root; everything else lives in `docs/` as `kebab-case.md`. Do not create new root docs without a reason — prefer extending the four above.
+**Naming.** Markdown files use `UPPERCASE.md` at repo root; everything else lives in `docs/` as `kebab-case.md`. Do not create new root docs without a reason — prefer extending the ones above. The bar for a reason is high: `CLAUDE.md` and `AGENTS.md` both sit at the root only because each is the file its tooling loads automatically and neither can be moved into `docs/`.
 
 ---
 

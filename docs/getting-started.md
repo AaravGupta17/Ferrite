@@ -32,7 +32,7 @@ This creates the `build/` directory with all test binaries as the default target
 cmake --build build
 ```
 
-This builds all **12 test binaries** and the static subsystem libraries. Benchmarks and the demo are opt-in and **excluded** from the default build (see below).
+This builds all **18 test binaries**, the `ferrite_compile` host tool, the `fuzz_runner` replayer, and the static subsystem libraries. Benchmarks and the demo are opt-in and **excluded** from the default build (see below).
 
 ## 3. Run the test suite
 
@@ -40,14 +40,14 @@ This builds all **12 test binaries** and the static subsystem libraries. Benchma
 ctest --test-dir build
 ```
 
-Runs all 12 tests. Add `--output-on-failure` to see failing output inline. For one binary directly (from `build/`):
+Runs all 19 CTest entries. Add `--output-on-failure` to see failing output inline. For one binary directly (from `build/`):
 
 ```sh
 ./build/test_engine.exe      # Windows
 ./build/test_engine          # Linux/macOS/WSL
 ```
 
-The full list of test binaries: `test_tensor`, `test_allocator`, `test_ops`, `test_ops3`, `test_graph`, `test_engine`, `test_onnx`, `test_planner`, `test_conv1d`, `test_profiler`, `test_quant`, `test_tensor_ser`.
+The full list of test binaries: `test_tensor`, `test_allocator`, `test_ops`, `test_ops3`, `test_graph`, `test_engine`, `test_onnx`, `test_planner`, `test_conv1d`, `test_profiler`, `test_quant`, `test_tensor_ser`, `test_opt`, `test_parallel`, `test_compiler`, `test_artifact`, `test_error_contract`, and `test_simd` (built only when `FERRITE_ENABLE_AVX2` is on). The nineteenth CTest entry is `fuzz_runner`, which replays the fuzz corpus against the ONNX parser.
 
 **End-to-end test.** `test_engine.exe` runs two full inferences through the engine (`fe_runtime_run`): a 2-layer MLP and a Stage 3 graph (exp → sigmoid → layernorm → gemm → softmax). It is the best single sign that the runtime works.
 

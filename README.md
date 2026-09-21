@@ -45,7 +45,9 @@ build if they get silently disabled.
 - **Quantization wired into the engine.** Per-channel INT8 repacks 2-D
   MatMul/Linear weights in place; dynamic-int8/int16 activation paths and
   FP16/BF16 storage with upconvert-on-read dispatch. A calibration pipeline
-  collects per-tensor activation ranges for future static scales.
+  collects per-tensor activation ranges, and `fe_quantize_model_static`
+  turns them into static activation scales that the engine's INT8/INT16
+  kernels use directly.
 - **AVX2 attached where it counts.** `fe_matmul`/`fe_linear` route to the
   tiled AVX2 kernel via CPUID (scalar fallback on failure); relu/add/mul and
   GEMM's base case do the same via a SIMD backend table.
@@ -106,12 +108,14 @@ Full numbers: `docs/benchmarks.md`.
 
 ## CI
 
-Eight legs, green on `main`: build+test (Debug), **mandatory ASan/UBSan**,
-libFuzzer against the ONNX parser (persistent corpus), perf gate (Release
-`bench_avx2` vs `bench/baseline.json`, 30% threshold, baseline
-re-seeded from the runner), coverage (`--fail-under-line 70`), Pi Zero W
-cross+QEMU, ESP32 IDF compile gate, and golden-vs-ONNX-Runtime. Nothing is
-silently skipped: a leg that can't do its check fails.
+Eleven jobs, green on `main`. The eight core legs: build+test (Debug, gcc
+and clang), **mandatory ASan/UBSan**, libFuzzer against the ONNX parser
+(persistent corpus), perf gate (Release `bench_avx2` vs a per-CPU baseline
+under `bench/`, 30% threshold, re-seeded from the runner), coverage
+(`--fail-under-line 70`), Pi Zero W cross+QEMU, ESP32 IDF compile gate, and
+golden-vs-ONNX-Runtime — plus a Windows/MinGW leg and a Release leg built
+with `-Werror`. Nothing is silently skipped: a leg that can't do its check
+fails.
 
 ## Reproduce the golden comparisons
 
@@ -139,4 +143,5 @@ python3 tools/golden_compare.py --run-model build/run_model
 - ONNX surface is the 20+ mapped ops — anything else fails loudly with
   `FE_ERR_SHAPE`, never silently.
 - INT16/FP16/BF16 are API-complete and engine-wired; static activation
-  scales are collected but not yet fed back to the engine.
+  scales are collected by calibration and consumed by the engine, but the
+  ranges are raw `max(|x|)` — percentile/stat smoothing is not built.
