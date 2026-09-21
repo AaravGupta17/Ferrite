@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <assert.h>
+#include <pthread.h>
 #include "../core/tensor.h"
 #include "../ops/ops.h"
 #include "../parallel/threadpool.h"
@@ -93,9 +94,13 @@ typedef struct {
     int  n;
 } Rec;
 
+static pthread_mutex_t rec_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void record_node(void *ctx, int node) {
     Rec *r = (Rec *)ctx;
+    pthread_mutex_lock(&rec_lock);
     r->order[r->n++] = node;
+    pthread_mutex_unlock(&rec_lock);
 }
 
 /* Build the tiny MLP graph node-by-node without the engine; nodes are

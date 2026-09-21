@@ -25,6 +25,7 @@
 #include "threadpool.h"
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 typedef struct {
     const FeGraph *g;
@@ -37,6 +38,7 @@ typedef struct {
     int           *ready;     /* sequential-mode queue */
     int            qhead, qtail;
     FeSchedResult *result;
+    pthread_mutex_t lock;   /* pool mode: guards need/met/enqueued/result */
 } Scheduler;
 
 /* Execute one node, then release every consumer whose last producer this
@@ -46,7 +48,8 @@ static void scheduler_execute(void *ctxv, int node) {
     Scheduler *s = (Scheduler *)ctxv;
     const FeNode *n = &s->g->nodes[node];
 
-    s->fn(s->ctx, node);
+    s->fn(s->ctx, node);              /* user callback runs unlocked */
+    if (s->pool) pthread_mutex_lock(&s->lock);
     s->result->exec_order[s->result->n_executed++] = node;
 
     for (int o = 0; o < n->n_outputs; o++) {
@@ -70,6 +73,7 @@ static void scheduler_execute(void *ctxv, int node) {
             }
         }
     }
+    if (s->pool) pthread_mutex_unlock(&s->lock);
 }
 
 FeStatus fe_scheduler_run(const FeGraph *g,
@@ -81,6 +85,7 @@ FeStatus fe_scheduler_run(const FeGraph *g,
 
     Scheduler sc;
     memset(&sc, 0, sizeof(sc));
+    pthread_mutex_init(&sc.lock, NULL);
     sc.g = g; sc.fn = fn; sc.ctx = ctx; sc.pool = (pool && pool->nthreads > 1) ? pool : NULL;
     sc.result = result;
     result->n_executed = 0;
@@ -90,7 +95,7 @@ FeStatus fe_scheduler_run(const FeGraph *g,
     sc.enqueued = calloc((size_t)g->n_nodes, sizeof(int));
     sc.ready = calloc((size_t)g->n_nodes, sizeof(int));
     if (!sc.need || !sc.met || !sc.enqueued || !sc.ready) {
-        free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready);
+        free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready); pthread_mutex_destroy(&sc.lock);
         return FE_ERR_NOMEM;
     }
 
@@ -102,12 +107,18 @@ FeStatus fe_scheduler_run(const FeGraph *g,
     }
 
     for (int n = 0; n < g->n_nodes; n++) {
+        int go = 0;
+        if (sc.pool) pthread_mutex_lock(&sc.lock);
         if (sc.met[n] == g->nodes[n].n_inputs && !sc.enqueued[n]) {
             sc.enqueued[n] = 1;
+            go = 1;
+        }
+        if (sc.pool) pthread_mutex_unlock(&sc.lock);
+        if (go) {
             if (sc.pool) {
                 FeStatus s = fe_threadpool_submit(sc.pool, scheduler_execute, &sc, n);
                 if (s != FE_OK) {
-                    free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready);
+                    free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready); pthread_mutex_destroy(&sc.lock);
                     return s;
                 }
             } else {
@@ -119,11 +130,11 @@ FeStatus fe_scheduler_run(const FeGraph *g,
     if (sc.pool) {
         FeStatus s = fe_threadpool_wait(sc.pool);
         if (s != FE_OK) {
-            free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready);
+            free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready); pthread_mutex_destroy(&sc.lock);
             return s;
         }
         if (sc.result->n_executed != g->n_nodes) {
-            free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready);
+            free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready); pthread_mutex_destroy(&sc.lock);
             return FE_ERR_SHAPE;
         }
     } else {
@@ -132,11 +143,11 @@ FeStatus fe_scheduler_run(const FeGraph *g,
             scheduler_execute(&sc, node);
         }
         if (sc.result->n_executed != g->n_nodes) {
-            free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready);
+            free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready); pthread_mutex_destroy(&sc.lock);
             return FE_ERR_SHAPE;
         }
     }
 
-    free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready);
+    free(sc.need); free(sc.met); free(sc.enqueued); free(sc.ready); pthread_mutex_destroy(&sc.lock);
     return FE_OK;
 }
