@@ -34,6 +34,87 @@ static void test_load_tiny_mlp(void) {
            g.n_nodes, g.n_tensors);
 }
 
+/*
+ * Softmax axis is recorded at parse time and judged against the FINAL rank.
+ *
+ * tiny_mlp writes axis=1 on a rank-2 output — that IS the last axis, so it is
+ * fully supported. The axis used to be checked during attribute parsing, when
+ * the output rank was still unresolved, which reported this valid model as
+ * unsupported on every single load.
+ */
+static void test_softmax_axis_recorded_not_misflagged(void) {
+    FeGraph g;
+    FeArena weight_arena;
+    fe_arena_init(&weight_arena, weight_buf, WEIGHT_BUF_SIZE);
+
+    assert(fe_onnx_load(&g, &weight_arena, "tests/tiny_mlp.onnx") == FE_OK);
+
+    int found = 0;
+    for (int i = 0; i < g.n_nodes; i++) {
+        if (g.nodes[i].op != FE_OP_SOFTMAX) continue;
+        found++;
+        int axis = g.nodes[i].attrs.softmax.axis;
+        int rank = g.tensors[g.nodes[i].outputs[0]].ndim;
+
+        /* The file's axis survived parsing rather than being dropped. */
+        assert(axis == 1);
+        /* Shape inference resolved the rank, so the axis is provably last. */
+        assert(rank == 2);
+        assert(axis == rank - 1);
+    }
+    assert(found == 1);
+
+    printf("PASS test_softmax_axis_recorded_not_misflagged "
+           "(axis=1 is the last axis of a rank-2 output)\n");
+}
+
+/*
+ * An initializer that declares more raw_data than the file holds must be
+ * rejected, not copied.
+ *
+ * Regression: fe_pb_bytes used to publish the pointer/length view and only
+ * then report failure, and the raw_data call site ignored that return. The
+ * sole remaining guard was `raw_len != numel * 4`, which the file controls
+ * through dims — so a 43-byte file with dims=[10,10] and a raw_data length of
+ * 400 passed the check and memcpy'd 400 bytes out of a 43-byte heap buffer.
+ * The load returned FE_OK with ~392 bytes of adjacent heap as model weights.
+ */
+static void test_truncated_raw_data_rejected(void) {
+    static const unsigned char model[] = {
+        0x3A, 0x29,                          /* ModelProto.graph, len 41   */
+          0x0A, 0x11,                        /*  GraphProto.node, len 17   */
+            0x0A, 0x01, 'x',                 /*   input  "x"               */
+            0x0A, 0x01, 'W',                 /*   input  "W"               */
+            0x12, 0x01, 'y',                 /*   output "y"               */
+            0x22, 0x06, 'M','a','t','M','u','l',
+          0x2A, 0x14,                        /*  GraphProto.initializer,20 */
+            0x08, 0x0A,                      /*   dims 10                  */
+            0x08, 0x0A,                      /*   dims 10  -> numel*4 = 400*/
+            0x10, 0x01,                      /*   data_type = FLOAT        */
+            0x42, 0x01, 'W',                 /*   name "W"                 */
+            0x4A, 0x90, 0x03,                /*   raw_data: DECLARES 400.. */
+            0x00, 0x00, 0x00, 0x00,          /*   ..but only 8 bytes       */
+            0x00, 0x00, 0x00, 0x00           /*     actually follow        */
+    };
+
+    const char *path = "tests/trunc_raw_data.onnx";
+    FILE *f = fopen(path, "wb");
+    assert(f);
+    assert(fwrite(model, 1, sizeof model, f) == sizeof model);
+    fclose(f);
+
+    FeGraph g;
+    FeArena weight_arena;
+    fe_arena_init(&weight_arena, weight_buf, WEIGHT_BUF_SIZE);
+
+    FeStatus s = fe_onnx_load(&g, &weight_arena, path);
+    assert(s != FE_OK);          /* must fail loudly, never copy the lie */
+
+    remove(path);
+    printf("PASS test_truncated_raw_data_rejected "
+           "(43-byte file claiming 400 bytes is refused)\n");
+}
+
 /* ---------------------------------------------------------------- */
 /* Hand-rolled protobuf wire format                                  */
 /* ---------------------------------------------------------------- */
@@ -630,6 +711,8 @@ static void test_parser_fuzz(void) {
 
 int main(void) {
     test_load_tiny_mlp();
+    test_softmax_axis_recorded_not_misflagged();
+    test_truncated_raw_data_rejected();
     test_unsupported_op_fails_loudly();
     test_value_info_and_attrs();
     test_pool_and_norm_attrs();

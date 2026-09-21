@@ -66,13 +66,32 @@ void fe_pb_skip(FePbReader *r, int wire_type) {
     if (r->pos > r->len) r->pos = r->len;
 }
 
+/*
+ * Hand out a bounds-checked view of a length-delimited field.
+ *
+ * The declared length is validated against the bytes actually remaining
+ * BEFORE the view is published, and neither out_data nor out_len is written
+ * unless the whole field is present. A caller that ignores the return value
+ * therefore cannot be handed a pointer/length pair describing memory past the
+ * end of the buffer — the earlier version published the view first and only
+ * then reported failure, so a truncated raw_data field became an over-read.
+ *
+ * Advancing r->pos to r->len on failure matches fe_pb_skip's clamp: a message
+ * that lies about a length is finished, not resynchronised.
+ */
 int fe_pb_bytes(FePbReader *r,
                 const unsigned char **out_data, size_t *out_len) {
     if (fe_pb_done(r)) return 0;
-    *out_len  = (size_t)fe_pb_varint(r);
+    uint64_t len       = fe_pb_varint(r);
+    size_t   remaining = r->len - r->pos;   /* fe_pb_done ⇒ pos < len */
+    if (len > (uint64_t)remaining) {
+        r->pos = r->len;
+        return 0;
+    }
+    *out_len  = (size_t)len;
     *out_data = r->data + r->pos;
     r->pos   += *out_len;
-    return r->pos <= r->len ? 1 : 0;
+    return 1;
 }
 
 /* Read a length-delimited field into a NUL-terminated string.
@@ -199,18 +218,42 @@ static FeStatus parse_initializer(FePbReader *r, FeGraph *g,
                 }
                 break;
             case 8: pb_string(r, name, FE_NAME_LEN); break;
-            case 9: fe_pb_bytes(r, &raw_data, &raw_len); break;
+            case 9: /* raw_data — a truncated field is fatal, never partial */
+                if (!fe_pb_bytes(r, &raw_data, &raw_len)) {
+                    fprintf(stderr, "ONNX: initializer '%s' declares more "
+                            "raw_data than the file holds\n",
+                            name[0] ? name : "(unnamed)");
+                    free(fvals);
+                    return FE_ERR_SHAPE;
+                }
+                break;
             default: fe_pb_skip(r, wtype); break;
         }
     }
 
     if (ndim == 0) { free(fvals); return FE_ERR_SHAPE; }
 
-    /* Bounds: reject absurd dims before integer overflow can bite. */
+    /*
+     * Bounds: reject absurd dims before integer overflow can bite.
+     *
+     * Per-dim limits alone are not enough — 4 dims of 2^20 each are all legal
+     * individually but their product is 2^80, which overflows int64_t (signed
+     * overflow is undefined, not merely wrapping). Cap the running product
+     * too. 2^28 elements is 1 GiB of float32, far past any arena this runtime
+     * binds, so no real model is turned away.
+     */
+    enum { FE_MAX_INIT_ELEMS = 1 << 28 };
     int64_t numel = 1;
     for (int d = 0; d < ndim; d++) {
         if (dims[d] <= 0 || dims[d] > (1 << 20)) { free(fvals); return FE_ERR_SHAPE; }
         numel *= dims[d];
+        if (numel > FE_MAX_INIT_ELEMS) {
+            fprintf(stderr, "ONNX: initializer '%s' claims %lld elements "
+                    "(limit %d)\n", name[0] ? name : "(unnamed)",
+                    (long long)numel, FE_MAX_INIT_ELEMS);
+            free(fvals);
+            return FE_ERR_SHAPE;
+        }
     }
 
     /* Find or register this tensor in the graph */
@@ -302,7 +345,7 @@ static void parse_attr(FePbReader *r, FeAttr *a) {
 
 /* Apply one parsed attribute to a node whose op is already known.
  * Unknown attributes on a supported op are a warning, never an error. */
-static void apply_attr(FeNode *node, FeGraph *g, FeOpType op,
+static void apply_attr(FeNode *node, FeOpType op,
                        const FeAttr *a) {
     if (strcmp(a->name, "pads") == 0 || strcmp(a->name, "strides") == 0 ||
         strcmp(a->name, "kernel_shape") == 0) {
@@ -388,20 +431,14 @@ static void apply_attr(FeNode *node, FeGraph *g, FeOpType op,
                 node->attrs.multihead.num_heads = a->int_val;
             break;
         case FE_OP_SOFTMAX:
-            /* Engine computes softmax over the last axis always. ONNX
-             * writes axis=-1 for "last", or the explicit last-axis index.
-             * Only flag an axis we can positively prove is not the last
-             * axis (rank must already be known — never guess). */
-            if (strcmp(a->name, "axis") == 0 && a->has_i && a->int_val != -1) {
-                int rank = 0;
-                if (node->n_outputs > 0)
-                    rank = g->tensors[node->outputs[0]].ndim;
-                if (rank > 0 && a->int_val != rank - 1) {
-                    fprintf(stderr,
-                            "ONNX: unsupported Softmax axis=%d (only "
-                            "-1/last supported)\n", a->int_val);
-                }
-            }
+            /* Engine computes softmax over the last axis always. ONNX writes
+             * axis=-1 for "last", or the explicit last-axis index. Record the
+             * axis here and judge it in check_softmax_axes() once shape
+             * inference has run — output ranks are not yet known at parse
+             * time, and guessing off an unresolved rank reports valid models
+             * as unsupported. */
+            if (strcmp(a->name, "axis") == 0 && a->has_i)
+                node->attrs.softmax.axis = (int)a->int_val;
             break;
         case FE_OP_LINEAR:
             /* Gemm maps to C = A @ W + b (alpha=1, beta=1, no transpose).
@@ -528,6 +565,11 @@ static FeStatus parse_node(FePbReader *r, FeGraph *g) {
         case FE_OP_ELU:
             node->attrs.elu.alpha = 1.0f;
             break;
+        case FE_OP_SOFTMAX:
+            /* ONNX opset-13 default. -1 also encodes "no axis attribute",
+             * which is exactly what the engine does (last axis). */
+            node->attrs.softmax.axis = -1;
+            break;
         case FE_OP_BATCHNORM:
             node->attrs.batchnorm.eps = 1e-5f;
             break;
@@ -541,7 +583,7 @@ static FeStatus parse_node(FePbReader *r, FeGraph *g) {
     }
 
     for (int i = 0; i < n_attrs; i++)
-        apply_attr(node, g, op, &attrs[i]);
+        apply_attr(node, op, &attrs[i]);
 
     /* Required attributes and inputs must be present — fail loudly. */
     switch (op) {
@@ -737,6 +779,34 @@ static FeStatus parse_graph(FePbReader *r, FeGraph *g,
     return FE_OK;
 }
 
+/*
+ * Flag Softmax nodes whose axis is provably not the last one.
+ *
+ * The engine always reduces over the last axis, so any other axis would
+ * compute a different result. Run this only after shape inference: at parse
+ * time an output's rank is usually still unknown, and an axis that merely
+ * looks wrong against an unresolved rank is the common case for valid models
+ * (axis=1 on a rank-2 output is the last axis, not an unsupported one).
+ *
+ * A rank that is still unknown here is left alone rather than guessed at.
+ */
+static void check_softmax_axes(const FeGraph *g) {
+    for (int i = 0; i < g->n_nodes; i++) {
+        const FeNode *n = &g->nodes[i];
+        if (n->op != FE_OP_SOFTMAX) continue;
+        int axis = n->attrs.softmax.axis;
+        if (axis == -1 || n->n_outputs < 1) continue;
+        int rank = g->tensors[n->outputs[0]].ndim;
+        if (rank <= 0) continue;                 /* unresolved — never guess */
+        if (axis < 0) axis += rank;              /* normalise negative axes */
+        if (axis != rank - 1)
+            fprintf(stderr,
+                    "ONNX: unsupported Softmax axis=%d on a rank-%d output "
+                    "(only the last axis is supported)\n",
+                    n->attrs.softmax.axis, rank);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Public entry point                                                   */
 /* ------------------------------------------------------------------ */
@@ -800,6 +870,8 @@ FeStatus fe_onnx_load(FeGraph *graph, FeArena *weight_arena,
         status = fe_graph_validate(graph);
     if (status == FE_OK)
         status = fe_optimize(graph, weight_arena);
+    if (status == FE_OK)
+        check_softmax_axes(graph);
     if (status == FE_OK) {
         printf("ONNX: loaded %d nodes, %d tensors\n",
                graph->n_nodes, graph->n_tensors);

@@ -410,12 +410,19 @@ typedef struct {
 - `fe_pb_varint` — LEB128 varint decoding.
 - `fe_pb_tag` — reads the tag; splits it into `field_number` (tag >> 3) and `wire_type` (tag & 7).
 - `fe_pb_skip` — skips a field by wire type (0=varint, 1=64-bit, 2=length-delimited, 5=32-bit).
-- `fe_pb_bytes` — reads a length-delimited blob.
+- `fe_pb_bytes` — reads a length-delimited blob. The declared length is checked
+  against the bytes actually remaining **before** the pointer/length view is
+  published, and on failure neither output is written. This is load-bearing: a
+  caller that ignores the return value must not be handed a view describing
+  memory past the end of the buffer. `parse_initializer` additionally caps a
+  weight's element count (2^28) so a product of individually-legal dims cannot
+  overflow. Both guards turn a malformed file into a loud `FE_ERR_SHAPE`.
 
 **ONNX structure** (ModelProto → GraphProto → NodeProto/TensorProto):
 - Top level: find `field 7` (graph); skip everything else.
 - `parse_graph`: `field 1` = node (repeated NodeProto), `field 5` = initializer (repeated TensorProto), `field 11` = input ValueInfo (shape data feeds static `FeTensorEntry`s via fields 11/12/13; remaining unknowns are filled by the shape-inference pass).
 - `parse_node`: reads input names (`field 1`), output names (`field 2`), node name (`field 3`), and `op_type` (`field 4`). Maps the op string to an `FeOpType` via `op_type_from_string`. `Gemm` maps to `FE_OP_LINEAR` with a warning when non-default `transA`/`transB`/`alpha`/`beta` would change the result; **unsupported ops fail loudly** rather than being skipped.
+- `check_softmax_axes`: runs after `fe_optimize`, once shape inference has settled every rank, and warns for any `Softmax` whose axis is provably not the last one (the engine always reduces over the last axis). Attribute parsing only *records* the axis. Judging it during parsing read a rank that was not yet inferred, so `tiny_mlp.onnx` — axis=1 on a rank-2 output, i.e. the last axis — was reported as unsupported on every load. An unresolved rank is left alone rather than guessed at.
 - `parse_initializer`: reads dims (`field 1`), data_type (`field 2`, assumed float32), name (`field 8`), and `raw_data` (`field 9`, packed float32 bytes). Registers the tensor as a weight and `memcpy`s its data into the weight arena.
 
 `find_or_add_tensor` deduplicates tensors by name, so one graph entry serves every node referencing the same tensor.
