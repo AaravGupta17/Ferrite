@@ -1,5 +1,5 @@
 # CLAUDE.md — Ferrite Operating Guide
-
+DO NOT PUSH WITH THE CLAUDE TAG ONLY PUSH WITH THE GITHUB ACCOUNT ON THIS PC WHICH IS ogshrug
 ## Bottom Line Up Front
 
 Ferrite is a **zero-dependency neural-network inference runtime in C11**. It parses
@@ -280,11 +280,16 @@ One subsystem per commit, scoped: `feat(scope): short summary`. Say **why**, not
 Recent history has drifted toward a capitalized-topic form (`CI: ...`, `Golden: ...`);
 the scoped form above is the one to follow.
 
-End commit messages with:
+**No AI attribution trailers.** Do not end commit messages with
+`Co-Authored-By: Claude ...` or any equivalent tag — see the rule at the top of this
+file. Commits are authored by the repo owner alone.
 
-```
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-```
+Commit and push as `ArmaanGuha <armaanguha@gmail.com>`, which is the GitHub account
+**ogshrug**. GitHub attributes by email, so that address is what makes a commit show up
+under the right account; the display name differing from the handle is expected. Note
+that this repo's older commits use a different identity (`Aarav
+<aaravgupta170909@gmail.com>`) and the remote is owned by `AaravGupta17` — do not copy
+either when making new commits.
 
 ---
 
