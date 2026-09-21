@@ -27,6 +27,8 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import onnx
+import onnx.utils
 import onnxruntime as ort
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,6 +37,23 @@ from golden_gen import OUTDIR  # noqa: E402
 REPO = Path(__file__).resolve().parent.parent
 # Models that live outside the generated zoo (committed fixtures).
 EXTRA_PATHS = {"acousticleaknet.onnx": REPO / "tests" / "acousticleaknet.onnx"}
+
+# AcousticLeakNet cut at the Softmax input. The softmax output of this model
+# is nearly uniform (~0.33 each), which squashes numerical errors; the logits
+# (~0.002-0.005) do not, so they get a much tighter tolerance. Built on the
+# fly so the 32 MB model is not duplicated in the repo.
+LOGITS_MODEL = "acousticleaknet_logits.onnx"
+ATOL_OVERRIDE = {LOGITS_MODEL: 1e-6}
+_TMP = tempfile.TemporaryDirectory()
+
+
+def cut_logits():
+    src = str(EXTRA_PATHS["acousticleaknet.onnx"])
+    m = onnx.load(src)
+    sm = [n for n in m.graph.node if n.op_type == "Softmax"][0]
+    dst = str(Path(_TMP.name) / LOGITS_MODEL)
+    onnx.utils.extract_model(src, dst, [m.graph.input[0].name], [sm.input[0]])
+    return Path(dst)
 
 BIN_MAGIC = b"FRT1"
 RNG = np.random.default_rng(424242)  # fixed per session => reproducible runs
@@ -46,6 +65,7 @@ MODELS = {
     "convbn.onnx":  ([1, 1, 8, 8], [1, 4]),
     "normmlp.onnx": ([1, 8],   [1, 3]),
     "acousticleaknet.onnx": ([1, 1, 1024], [1, 3]),
+    "acousticleaknet_logits.onnx": ([1, 1, 1024], [1, 3]),
 }
 
 
@@ -97,7 +117,11 @@ def run_ferrite(run_model, model_path, x, out_shape):
 
 
 def compare(model_name, run_model, atol, rtol):
-    model_path = EXTRA_PATHS.get(model_name, OUTDIR / model_name)
+    if model_name == LOGITS_MODEL:
+        model_path = cut_logits()
+    else:
+        model_path = EXTRA_PATHS.get(model_name, OUTDIR / model_name)
+    atol = ATOL_OVERRIDE.get(model_name, atol)
     in_shape, out_shape = MODELS[model_name]
 
     x = RNG.uniform(-1.0, 1.0, in_shape).astype(np.float32)
@@ -120,7 +144,8 @@ def compare(model_name, run_model, atol, rtol):
     ok = n_close == total
     status = "PASS" if ok else "FAIL"
     print(f"  {status:4s} {model_name:<12} max_abs={max_abs:.3e} "
-          f"max_rel={max_rel:.3e} match={n_close}/{total}")
+          f"max_rel={max_rel:.3e} match={n_close}/{total} "
+          f"atol={atol:.0e}")
     return ok
 
 
