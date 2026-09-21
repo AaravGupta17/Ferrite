@@ -1,0 +1,11 @@
+{
+  "elem_avx2_ms": 0.426,
+  "elem_naive_ms": 0.613,
+  "elem_speedup": 1.44,
+  "gemm_base_ms": 1.002,
+  "gemm_speedup": 14.26,
+  "gemm_transb_ms": 14.289,
+  "matmul_avx2_ms": 1.014,
+  "matmul_naive_ms": 8.821,
+  "matmul_speedup": 8.7
+}

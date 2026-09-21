@@ -138,10 +138,17 @@ jobs:
         run: |
           uname -a
           grep -m1 "model name" /proc/cpuinfo
+          cpu=$(grep -m1 "model name" /proc/cpuinfo | sed 's/.*: //')
+          case "$cpu" in
+            *"EPYC 9V74"*)    base=bench/baseline.json ;;
+            *"Xeon"*"8370C"*) base=bench/baseline-xeon-8370c.json ;;
+            *) echo "::warning::No perf baseline for CPU '$cpu'; gate skipped. Seed one from the perf-linux-ci artifact."; exit 0 ;;
+          esac
+          echo "Using baseline: $base"
           python3 tools/check_perf.py \
             --current /tmp/bench_current.json \
-            --baseline bench/baseline.json \
-            --label "linux-ci Release" \
+            --baseline "$base" \
+            --label "linux-ci Release ($cpu)" \
             --threshold 0.30
       - name: Upload measured output (for re-seeding baseline)
         if: always()
